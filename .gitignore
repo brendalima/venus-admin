@@ -1,16 +1,16 @@
-# binários
+# binaries
 /bin/
 /server
 
-# segredos — nunca commitar
-# .env.local é gerado pelo `neon init` e traz a senha do banco
+# secrets — never commit
+# .env.local is written by `neon init` and carries the database password
 .env
 .env.*
 !.env.example
 
-# dependências do tooling do neon.ts (não é um projeto Node)
+# dependencies of the neon.ts tooling (this is not a Node project)
 /node_modules/
 
-# cobertura de testes
+# test coverage
 *.out
 coverage.html

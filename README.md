@@ -1,103 +1,120 @@
 # Vênus Oasis — Admin
 
-Backend e painel de cadastro de produtos do [venus-site](../venus-site).
+Backend and product catalogue admin for [venus-site](../venus-site).
 
-**O site público continua estático.** Este serviço não atende visitantes: ele hospeda o admin e expõe os produtos para o *build* do site. Se este backend estiver desligado, caído ou em deploy, o site segue no ar normalmente.
+**The public site stays static.** This service does not serve visitors: it hosts the admin and feeds the site's build. If it is down, asleep or mid-deploy, the shop stays online.
 
 ```
-admin salva → clica "Publicar"
-   → webhook do Cloudflare Pages
-   → build do site busca /api/products
-   → site estático republicado (~1 min)
+admin saves → clicks "Publicar"
+   → Cloudflare Pages deploy hook
+   → the site build fetches /api/products
+   → static site republished (~1 min)
 ```
 
-## Rodando
+> Code, comments and commits are in English. **User-facing strings stay in Portuguese** — the people running this admin are Brazilian.
 
-Requer Go 1.27 (fixado em `.tool-versions`, via asdf).
+## Architecture
+
+Hexagonal (ports and adapters). Dependencies point inward: adapters know the core, never the reverse.
+
+```
+cmd/server/              composition root — the only place that wires
+                         adapters into the core
+
+internal/
+  catalog/               THE CORE. Domain model, rules and the ports it
+                         needs. Imports nothing from this project and no
+                         driver or framework.
+    product.go             entities, Slugify, View
+    errors.go              domain errors and validation
+    ports.go               Repository, ImageStore, ImageProcessor,
+                           SitePublisher — interfaces the core owns
+
+  adapter/
+    web/                 driving adapter: HTTP, routing, middleware
+
+  platform/
+    config/              configuration from the environment
+    database/            pgx pool and goose migrations
+```
+
+Ports live in the core so the core owns the contract and adapters depend on it. That also happens to match Go's own habit of declaring interfaces where they are consumed.
+
+The rule is enforced by tests, not by discipline alone — see `internal/catalog/architecture_test.go`. Add a stray import to the core and the suite fails.
+
+Adapters still to come: `postgres` (Repository), `r2` (ImageStore), `vips` (ImageProcessor), `cloudflare` (SitePublisher).
+
+## Running
+
+Needs Go 1.27 (pinned in `.tool-versions`, via asdf).
 
 ```bash
 cp .env.example .env
 make run
 ```
 
-Sobe em `http://localhost:8080`. Sem banco configurado o servidor inicia mesmo assim e `/readyz` avisa — útil para mexer em tela sem depender do Postgres.
+Starts on `http://localhost:8080`. With no database configured the server still boots and `/readyz` says so — handy for working on screens without Postgres.
 
-Em desenvolvimento o `.env.local` (gerado pelo `neon init`) é carregado automaticamente. Variável já exportada no ambiente continua tendo precedência.
+In development `.env.local` (written by `neon init`) is loaded automatically. A variable already exported in the shell still wins.
 
-| Comando | O que faz |
+| Command | What it does |
 |---|---|
-| `make run` | Servidor em desenvolvimento |
-| `make test` | Testes com detector de corrida |
-| `make check` | Tudo que o CI roda: gofmt, vet, testes |
-| `make cover` | Relatório de cobertura em HTML |
-| `make build` | Binário em `bin/server` |
+| `make run` | Development server |
+| `make test` | Tests with the race detector |
+| `make check` | Everything CI runs: gofmt, vet, tests |
+| `make cover` | Coverage report as HTML |
+| `make build` | Binary into `bin/server` |
 
 ## Endpoints
 
-| Rota | Para quê |
+| Route | Purpose |
 |---|---|
-| `GET /healthz` | Vivacidade — **não** consulta o banco |
-| `GET /readyz` | Prontidão — consulta o banco |
-| `GET /admin` | Painel (em construção) |
+| `GET /healthz` | Liveness — does **not** touch the database |
+| `GET /readyz` | Readiness — does touch the database |
+| `GET /admin` | Admin panel (placeholder) |
 
-A separação entre os dois é proposital. O Fly usa `/healthz` para decidir se a máquina está saudável, e o Neon no plano gratuito dorme quando ocioso: se a vivacidade dependesse do banco, a máquina seria marcada como doente a cada cochilo do Postgres.
+Splitting the two is deliberate. Fly uses `/healthz` to decide whether the machine is healthy, and Neon's free tier suspends when idle: if liveness depended on the database, the machine would be marked unhealthy every time Postgres took a nap.
 
-## Estrutura
+## Database
 
+Postgres 18 on **Neon**, project `venus`, region `aws-sa-east-1` (São Paulo) — the same region as the app on Fly.
+
+Migrations live in `internal/platform/database/migrations/`, embedded in the binary with `go:embed`, and run at startup. With a single machine that is safe and avoids a separate deploy step; with more than one instance it becomes a `release_command` in `fly.toml` so two machines do not migrate at once.
+
+### Why the direct connection, not the pooled one
+
+Neon exposes both: `DATABASE_URL` goes through PgBouncer and `DATABASE_URL_UNPOOLED` goes direct. The app uses the **direct** one, because pgx already keeps its own pool — stacking it on transaction pooling breaks the prepared statement cache, and with one process and low concurrency there is nothing to gain in exchange.
+
+The pool sets `MinConns = 0` on purpose: Neon's compute suspends when idle, and holding a connection open would keep it awake, burning free-tier hours while the admin sits unused.
+
+```bash
+make test                            # integration tests skip without a database
+go test ./internal/platform/database/ -v   # with .env.local present, they really run
 ```
-cmd/server/      binário do servidor
-cmd/adduser/     criação de usuário do admin (M1)
-internal/
-  config/        configuração vinda do ambiente
-  web/           rotas, middleware, handlers
-  store/         consultas geradas pelo sqlc (M1)
-  images/        libvips + envio para o R2 (M2)
-  publish/       webhook de publicação (M3)
-migrations/      goose
-```
 
-## Configuração
+## Configuration
 
-Tudo por variável de ambiente — é o que o Fly espera (`fly secrets`) e evita credencial no repositório.
+Everything through environment variables — what Fly expects (`fly secrets`), and it keeps credentials out of the repository.
 
-| Variável | Padrão | Obrigatória |
+| Variable | Default | Required |
 |---|---|---|
-| `APP_ENV` | `dev` | não (`dev` ou `prod`) |
-| `PORT` | `8080` | não |
-| `DATABASE_URL_UNPOOLED` | — | sim (preferida) |
-| `DATABASE_URL` | — | usada se a de cima faltar |
-
-### Por que a conexão direta, e não a com pooler
-
-O Neon expõe duas: `DATABASE_URL` passa por PgBouncer e `DATABASE_URL_UNPOOLED` vai direto. O app usa a **direta**, porque o pgx já mantém o próprio pool — empilhá-lo sobre o pooling por transação do PgBouncer quebra o cache de prepared statements, e com um processo só e pouca concorrência não há nada a ganhar em troca.
-
-O pool usa `MinConns = 0` de propósito: o compute do Neon suspende quando fica ocioso, e segurar conexão aberta o impediria de dormir, queimando horas do plano gratuito com o admin parado.
+| `APP_ENV` | `dev` | no (`dev` or `prod`) |
+| `PORT` | `8080` | no |
+| `DATABASE_URL_UNPOOLED` | — | yes (preferred) |
+| `DATABASE_URL` | — | used if the above is absent |
 
 ## Deploy
 
-Fly.io, região `gru` (São Paulo), máquina de 256 MB que **desliga quando ninguém usa** e religa na próxima requisição. O binário Go sobe em dezenas de milissegundos, então `auto_stop_machines = "stop"` basta — não precisa do `suspend`, que é mais caro.
+Fly.io, region `gru` (São Paulo), a 256 MB machine that **stops when unused** and starts again on the next request.
 
 ```bash
-fly launch --no-deploy   # primeira vez
-fly secrets set DATABASE_URL="..."
+fly launch --no-deploy   # first time
+fly secrets set DATABASE_URL_UNPOOLED="..."
 fly deploy
 ```
 
-## Banco
+## Status
 
-Postgres 18 no **Neon**, projeto `venus`, região `aws-sa-east-1` (São Paulo) — mesma região do app no Fly.
+Server, configuration, middleware, health checks, graceful shutdown, Docker, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and ports defined.
 
-As migrações ficam em `internal/store/migrations/`, embutidas no binário com `go:embed`, e são aplicadas na inicialização. Com uma única máquina isso é seguro e dispensa um passo separado de deploy; se um dia houver mais de uma instância, vira um `release_command` no `fly.toml` para duas não migrarem ao mesmo tempo.
-
-```bash
-make test                       # testes de integração pulam sem DATABASE_URL
-go test ./internal/store/ -v    # com .env.local presente, rodam de verdade
-```
-
-## Estado atual
-
-**M0 concluído:** servidor, configuração, middleware, health checks, encerramento gracioso, Docker, fly.toml, CI.
-
-**M1 parcial:** banco Neon conectado, esquema do catálogo migrado (`products`, `product_images`, `site_state`), testes de integração.
-
-A seguir — M1: sqlc, autenticação e as telas de CRUD.
+Next: the Postgres adapter, authentication and the CRUD screens.
