@@ -17,12 +17,12 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -trimpath \
       -ldflags="-s -w" \
-      -o /out/ ./cmd/api ./cmd/migrate
+      -o /out/ ./cmd/api ./cmd/migrate ./cmd/adduser
 
 # ---------- runtime ----------
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /out/api /out/migrate /
+COPY --from=build /out/api /out/migrate /out/adduser /
 
 # The unprivileged user comes from the :nonroot tag.
 # CMD rather than ENTRYPOINT so Fly's release_command ("/migrate") and

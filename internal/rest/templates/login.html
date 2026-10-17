@@ -1,0 +1,20 @@
+{{define "title"}}Entrar{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>Entrar no painel</h1>
+  {{with .Error}}<p class="alert" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="/login">
+    <label for="email">E-mail</label>
+    <input id="email" name="email" type="email" value="{{.Email}}"
+           autocomplete="username" inputmode="email" autocapitalize="none"
+           required {{if not .Email}}autofocus{{end}}>
+
+    <label for="password">Senha</label>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" required {{if .Email}}autofocus{{end}}>
+
+    <button type="submit" class="full">Entrar</button>
+  </form>
+</div>
+{{end}}

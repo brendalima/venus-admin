@@ -1,0 +1,43 @@
+# Deploys production after a pull request is merged into master, and only
+# once CI has passed on that merge. A push that fails CI never ships.
+#
+# Needs the repository secret FLY_API_TOKEN (`fly tokens create deploy`).
+# The app's own secrets, such as DATABASE_URL_UNPOOLED for the Neon
+# branch "production", live in Fly (`fly secrets set`), not here.
+name: Fly Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+jobs:
+  deploy:
+    name: Deploy to production
+    # workflow_run also fires for failed runs, and for CI on pull requests
+    # whose head branch happens to be named master.
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    # One deploy at a time; a newer merge waits instead of racing.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit CI tested, not whatever master points at by now.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Pinned to a commit: an action that moves under us can break
+      # deploys without any change here, or worse, see the token.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        with:
+          version: 0.4.118
+
+      # The release_command in fly.toml runs /migrate before the new
+      # version takes traffic; a failed migration stops the deploy.
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

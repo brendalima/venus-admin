@@ -17,6 +17,14 @@ func (e *ConflictError) Error() string { return e.msg }
 
 func NewConflictError(msg string) *ConflictError { return &ConflictError{msg: msg} }
 
+// UnauthorizedError reports a failed login. It never says whether the
+// email or the password was wrong, so nobody can probe for accounts.
+type UnauthorizedError struct{ msg string }
+
+func (e *UnauthorizedError) Error() string { return e.msg }
+
+func NewUnauthorizedError(msg string) *UnauthorizedError { return &UnauthorizedError{msg: msg} }
+
 // ValidationError carries the field that failed and a message meant for
 // the person using the admin. Error() stays in English like every other
 // error; Message is user-facing, so it is in Portuguese — the people

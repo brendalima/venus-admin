@@ -21,12 +21,12 @@ func testDB(t *testing.T) *sql.DB {
 	_ = godotenv.Load("../.env.local")
 	_ = godotenv.Load("../.env")
 
-	dsn := os.Getenv("DATABASE_URL_UNPOOLED")
+	// Only the dedicated test branch: these tests write and delete rows,
+	// so they must never fall back to DATABASE_URL, which is dev's or
+	// production's.
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping integration test")
+		t.Skip("no TEST_DATABASE_URL — skipping integration test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -48,7 +48,7 @@ func TestSchemaIsApplied(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 
-	for _, table := range []string{"products", "product_images", "site_state"} {
+	for _, table := range []string{"products", "product_images", "site_state", "admin_users", "sessions"} {
 		var exists bool
 		err := db.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
@@ -163,6 +163,7 @@ func TestIDsAreUUIDsWithoutDefault(t *testing.T) {
 		{"products", "id"},
 		{"product_images", "id"},
 		{"product_images", "product_id"},
+		{"admin_users", "id"},
 	}
 
 	for _, tt := range tests {

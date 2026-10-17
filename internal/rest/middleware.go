@@ -92,6 +92,20 @@ func SecureHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// RejectCrossOrigin blocks state-changing requests sent by another site
+// (CSRF), using the browser's Sec-Fetch-Site and Origin headers. Together
+// with the SameSite=Lax session cookie this replaces CSRF tokens, which
+// would mean a hidden field in every form.
+func RejectCrossOrigin(next http.Handler) http.Handler {
+	cop := http.NewCrossOriginProtection()
+	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.WarnContext(r.Context(), "cross-origin request rejected",
+			"method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
+		http.Error(w, "Pedido recusado: ele veio de outro site.", http.StatusForbidden)
+	}))
+	return cop.Handler(next)
+}
+
 // Chain applies middleware in the order given: the first is outermost,
 // meaning the first to see the request.
 func Chain(h http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
