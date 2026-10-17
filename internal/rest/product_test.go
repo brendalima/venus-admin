@@ -254,11 +254,13 @@ func TestProductCreateRejected(t *testing.T) {
 			wantValue:  "18x",
 		},
 		{
-			name:       "missing price",
-			edit:       func(f url.Values) { f.Set("price", "") },
+			// Never saved as "no price": the service is not even called,
+			// yet the other fields are still checked.
+			name:       "unreadable price and no name",
+			edit:       func(f url.Values) { f.Set("price", "18x"); f.Set("name", "") },
 			wantStatus: http.StatusBadRequest,
-			wantText:   []string{"Falta o preço"},
-			wantValue:  "Triângulo verde",
+			wantText:   []string{`id="price-error"`, "Falta o nome da peça"},
+			wantValue:  "18x",
 		},
 		{
 			// The slug comes from the name on creation, so its error
@@ -308,6 +310,31 @@ func TestProductCreateRejected(t *testing.T) {
 				t.Error("a rejected product was saved")
 			}
 		})
+	}
+}
+
+// Pieces are catalogued before they are priced.
+func TestProductWithoutPrice(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+
+	form := validForm()
+	form.Set("price", "")
+	res, _ := app.post(t, "/admin/products", form)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create without a price: status %d, want 303", res.StatusCode)
+	}
+	p := app.products.created[0]
+	if p.PriceCents != 0 {
+		t.Errorf("price = %d cents, want 0", p.PriceCents)
+	}
+
+	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "Sem preço") || strings.Contains(body, "R$ 0,00") {
+		t.Error("the list does not say the price is missing")
+	}
+	// An empty field, not "0,00", which someone could save as a price.
+	if _, body := app.get(t, "/admin/products/"+p.ID, nil); strings.Contains(body, `value="0,00"`) || !strings.Contains(body, `id="price" name="price" type="text" inputmode="decimal" value=""`) {
+		t.Error("the edit form does not show an empty price")
 	}
 }
 

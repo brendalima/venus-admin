@@ -19,6 +19,10 @@ type Product struct {
 	// PriceCents is an integer, never a float. In floating point
 	// 29.90 * 3 yields 89.69999999999999; prices are entered in reais by
 	// the admin and converted to cents at the edge.
+	//
+	// Zero means the price is not set yet: the owners are cataloguing
+	// pieces before pricing them. Nothing is sold for free, so zero is
+	// free to mean that, and the column needs no NULL.
 	PriceCents int64
 
 	Sizes       []string
@@ -32,6 +36,9 @@ type Product struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// HasPrice reports whether the price has been set.
+func (p Product) HasPrice() bool { return p.PriceCents > 0 }
 
 // Cover is the photo shown on the catalogue card: the first one.
 func (p Product) Cover() (Image, bool) {
@@ -108,11 +115,8 @@ func (p Product) Validate() error {
 		errs = append(errs, NewValidationError("name", "Falta o nome da peça"))
 	}
 
-	switch {
-	case p.PriceCents < 0:
+	if p.PriceCents < 0 {
 		errs = append(errs, NewValidationError("price", "O preço não pode ser negativo"))
-	case p.PriceCents == 0:
-		errs = append(errs, NewValidationError("price", "Falta o preço"))
 	}
 
 	if len(p.Sizes) == 0 {

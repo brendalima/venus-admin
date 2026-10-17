@@ -111,10 +111,10 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product |
 | `POST /admin/products/{id}/delete` | Deletes it |
 
-Product form fields: `name`, `price` (reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), and on edit `slug`.
+Product form fields: `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), and on edit `slug`.
 
 - **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
-- **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`.
+- **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
 - **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
 - **Deleting** goes through a confirmation page that names the product and suggests marking it sold out instead.
 

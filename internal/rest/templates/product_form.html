@@ -18,15 +18,15 @@
            {{if not .ID}}autofocus{{end}}>
     {{with index $e "name"}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
 
-    <label for="price">Preço</label>
+    <label for="price">Preço <span class="hint">(opcional)</span></label>
     <div class="price">
       <span aria-hidden="true">R$</span>
       <input id="price" name="price" type="text" inputmode="decimal" value="{{.Form.Price}}"
-             placeholder="189,90" required autocomplete="off"
+             placeholder="189,90" autocomplete="off"
              aria-describedby="{{with index $e "price"}}price-error {{end}}price-hint"
              {{with index $e "price"}}aria-invalid="true"{{end}}>
     </div>
-    <p class="hint" id="price-hint">Em reais. Ex.: 189,90</p>
+    <p class="hint" id="price-hint">Em reais, como 189,90. Pode deixar vazio e preencher depois.</p>
     {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
 
     <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>

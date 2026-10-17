@@ -55,6 +55,15 @@ func TestValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid product rejected: %v", err)
 	}
+	// Pieces can be catalogued before they are priced.
+	unpriced := valid
+	unpriced.PriceCents = 0
+	if err := unpriced.Validate(); err != nil {
+		t.Errorf("product without a price rejected: %v", err)
+	}
+	if unpriced.HasPrice() || !valid.HasPrice() {
+		t.Error("HasPrice does not follow the price")
+	}
 
 	tests := []struct {
 		name  string
@@ -62,7 +71,6 @@ func TestValidate(t *testing.T) {
 		field string
 	}{
 		{"missing name", func(p *Product) { p.Name = "" }, "name"},
-		{"zero price", func(p *Product) { p.PriceCents = 0 }, "price"},
 		{"negative price", func(p *Product) { p.PriceCents = -1 }, "price"},
 		{"blank name", func(p *Product) { p.Name = "   " }, "name"},
 		{"no sizes", func(p *Product) { p.Sizes = nil }, "sizes"},
@@ -111,7 +119,7 @@ func TestValidateReportsEveryField(t *testing.T) {
 		}
 	}
 	// No slug error: with no name, the missing name is the whole story.
-	want := []string{"name", "price", "sizes"}
+	want := []string{"name", "sizes"}
 	if !slices.Equal(got, want) {
 		t.Errorf("fields = %v, want %v", got, want)
 	}

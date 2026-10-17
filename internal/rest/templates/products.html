@@ -25,7 +25,7 @@
 <li class="product" id="product-{{.ID}}">
   <a href="/admin/products/{{.ID}}">
     <strong>{{.Name}}</strong>
-    <span class="meta">R$ {{reais .PriceCents}} · {{join .Sizes " "}}</span>
+    <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}</span>
     {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
   </a>
   <form class="inline" method="post" action="/admin/products/{{.ID}}/sold-out"

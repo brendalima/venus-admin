@@ -84,9 +84,13 @@ func readProductForm(r *http.Request) productForm {
 }
 
 func productFormFrom(p domain.Product) productForm {
+	price := ""
+	if p.HasPrice() {
+		price = formatReais(p.PriceCents)
+	}
 	return productForm{
 		Name:        p.Name,
-		Price:       formatReais(p.PriceCents),
+		Price:       price,
 		Sizes:       p.Sizes,
 		Description: p.Description,
 		Details:     strings.Join(p.Details, "\n"),
@@ -96,8 +100,8 @@ func productFormFrom(p domain.Product) productForm {
 }
 
 // product converts the form to the domain. A price that cannot be read
-// is returned as an error and left at zero, which the domain rejects, so
-// nothing is saved while the rest of the form is still validated.
+// comes back as an error, and must not be saved: left at zero, it would
+// pass for "no price yet".
 func (f productForm) product() (domain.Product, error) {
 	cents, err := parseReais(f.Price)
 	return domain.Product{
@@ -170,10 +174,14 @@ func (h *Product) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	form := readProductForm(r)
 	p, priceErr := form.product()
+	if priceErr != nil {
+		h.priceUnreadable(w, r, productFormPage{Form: form}, p)
+		return
+	}
 
 	created, err := h.service.Create(r.Context(), p)
 	if err != nil {
-		h.saveFailed(w, r, productFormPage{Form: form}, err, priceErr)
+		h.saveFailed(w, r, productFormPage{Form: form}, err)
 		return
 	}
 	h.flash(r, sessionFlashKey, "“"+created.Name+"” foi cadastrada.")
@@ -196,10 +204,14 @@ func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
 	form := readProductForm(r)
 	p, priceErr := form.product()
 	p.ID = id
+	if priceErr != nil {
+		h.priceUnreadable(w, r, productFormPage{ID: id, Form: form}, p)
+		return
+	}
 
 	updated, err := h.service.Update(r.Context(), p)
 	if err != nil {
-		h.saveFailed(w, r, productFormPage{ID: id, Form: form}, err, priceErr)
+		h.saveFailed(w, r, productFormPage{ID: id, Form: form}, err)
 		return
 	}
 	h.flash(r, sessionFlashKey, "As alterações em “"+updated.Name+"” foram salvas.")
@@ -310,7 +322,7 @@ func (h *Product) parseForm(w http.ResponseWriter, r *http.Request) bool {
 
 // saveFailed answers a create or update the service refused, showing the
 // form again as it was sent.
-func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page productFormPage, err, priceErr error) {
+func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page productFormPage, err error) {
 	ctx := r.Context()
 
 	var notFound *domain.NotFoundError
@@ -320,17 +332,29 @@ func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page produc
 		return
 	}
 
-	page.Errors = fieldErrors(err)
-	if len(page.Errors) == 0 {
+	errs := fieldErrors(err)
+	if len(errs) == 0 {
 		slog.ErrorContext(ctx, "couldn't save product", "error", err)
 		page.Alert = "Não consegui salvar agora. Nada foi perdido: tente de novo em instantes."
 		h.renderForm(w, r, http.StatusInternalServerError, page)
 		return
 	}
+	h.renderInvalid(w, r, page, errs)
+}
 
-	if priceErr != nil {
-		page.Errors["price"] = "Escreva o preço só com números, como 189,90"
-	}
+// priceUnreadable answers a form whose price could not be read, without
+// calling the service. The domain still checks the other fields, so they
+// are all marked at once. The slug is left out: the service derives it,
+// and has not run.
+func (h *Product) priceUnreadable(w http.ResponseWriter, r *http.Request, page productFormPage, p domain.Product) {
+	errs := fieldErrors(p.Normalized().Validate())
+	delete(errs, "slug")
+	errs["price"] = "Escreva o preço só com números, como 189,90, ou deixe vazio"
+	h.renderInvalid(w, r, page, errs)
+}
+
+func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page productFormPage, errs map[string]string) {
+	page.Errors = errs
 	// A new product's address comes from its name, and the form has no
 	// address field to show the error next to.
 	if msg, ok := page.Errors["slug"]; ok && page.ID == "" {

@@ -26,6 +26,8 @@ Last verified: 2026-10-17 · `master` at `5351f98` (PR #2, `authentication`, mer
 > - **Delete has its own confirmation page** (`GET …/delete`), not `hx-confirm`, so it works without JS and names the piece. Product deletion does not touch storage yet: M2 must remove the photo files when it adds them.
 > - The publish badge and button are **not** here; they come with M3 (`HasUnpublishedChanges` is ready in the repository).
 >
+> **Decided with the human:** the price is **optional** for now — the owners will catalogue pieces before pricing them. `price_cents = 0` means "no price yet" (`domain.Product.HasPrice`); no migration, since nothing is ever sold for free. The admin shows "Sem preço" and an empty field, and refuses a price it cannot read rather than saving it as zero. **M3/M4 must handle it:** the site formats `priceCents` directly (`ProductCard.tsx`, `ProductPage.tsx`) and would show "R$ 0,00" — ask the human what an unpriced piece should show (nothing? "Consulte"?) before wiring the build.
+>
 > **Decided with the human:** photos carry no angle label (`Frente`, `Costas`… are gone); order alone matters and the first photo is the cover. `product_images` stores only the object keys (`key_600`, `key_1200`, migration `00004`); public URLs are built from a base URL in config, to be added (`IMAGE_BASE_URL`) when M2 first needs it. The static site still reads a `label` per image (`ProductCard.tsx`, `ProductPage.tsx` in `../venus-site`) for the caption and alt text — M4 must drop the caption and fall back to "<name> — foto N".
 
 ---
