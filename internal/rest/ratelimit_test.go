@@ -12,8 +12,10 @@ func TestLoginLimiterWindow(t *testing.T) {
 	l := NewLoginLimiter(2, 15*time.Minute)
 	l.now = func() time.Time { return now }
 
-	if !l.Allow("1.1.1.1") || !l.Allow("1.1.1.1") {
-		t.Fatal("attempts within the limit were refused")
+	for i := range 2 {
+		if !l.Allow("1.1.1.1") {
+			t.Fatalf("attempt %d, within the limit, was refused", i+1)
+		}
 	}
 	if l.Allow("1.1.1.1") {
 		t.Error("the attempt over the limit was allowed")
