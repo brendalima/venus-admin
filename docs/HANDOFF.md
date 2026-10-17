@@ -8,6 +8,13 @@ Last verified: 2026-10-16 · commits `505c728` (pushed) and `bfc6058` (local onl
 >
 > **2026-10-17, later:** M1 step 1 is done. `internal/repository/product.go` implements `ProductRepository` and is integration-tested against Neon. Migration `00003` adds `site_state.last_changed_at`, kept up to date by triggers, because comparing each product's `updated_at` missed deletes and photo changes. `adapters.Migrate` now holds a Postgres advisory lock: `go test ./...` migrates from two packages in parallel, and the unlocked version collided.
 >
+> **2026-10-17, evening:** M1 step 2 is done, on branch `authentication` (local, not pushed). Migration `00005` adds `admin_users` and `sessions`. `cmd/adduser` creates users; `/login`, `/logout` and `RequireLogin` guard `/admin`. Verified end to end against Neon with the real binaries (adduser → login → /admin → logout), and the throwaway user removed. Choices made along the way, worth knowing before changing them:
+> - **No `scs/postgresstore`.** It ignores contexts (AGENTS.md §7) and runs a cleanup query every 5 minutes, which is Neon's suspend timeout, so the database would never sleep. `internal/repository/session.go` implements `scs.CtxStore` instead, and expired sessions are deleted on each successful login.
+> - **CSRF without tokens:** Go's `http.CrossOriginProtection` (Sec-Fetch-Site/Origin) plus `SameSite=Lax`. Forms in step 3 need no hidden field.
+> - **The rate limit counts every attempt**, not only failures, and runs before the hash: each argon2id costs 19 MiB on a 256 MB machine. A successful login resets the IP's count.
+> - **`RequireLogin` loads the user on every request**, so removing someone from `admin_users` ends their sessions immediately; handlers get them via `currentUser(ctx)`. A database error there answers 500 and does not log the person out.
+> - Templates live in `internal/rest/templates/` (`base.html` layout plus one file per page), parsed once at startup by `rest.MustNewTemplates`. Step 3 adds pages there; HTMX is not vendored yet.
+>
 > **Decided with the human:** photos carry no angle label (`Frente`, `Costas`… are gone); order alone matters and the first photo is the cover. `product_images` stores only the object keys (`key_600`, `key_1200`, migration `00004`); public URLs are built from a base URL in config, to be added (`IMAGE_BASE_URL`) when M2 first needs it. The static site still reads a `label` per image (`ProductCard.tsx`, `ProductPage.tsx` in `../venus-site`) for the caption and alt text — M4 must drop the caption and fall back to "<name> — foto N".
 
 ---
@@ -41,7 +48,8 @@ The consequence worth internalising: **if this backend is down, asleep or mid-de
 | Database | Neon Postgres 18, region `aws-sa-east-1`, connected and migrated |
 | Schema | `products`, `product_images`, `site_state` + `updated_at` trigger |
 | Domain model | `Product`, `Image`, `Slugify`, validation |
-| Contracts | `ProductRepository` implemented (`internal/repository/product.go`); `ImageStore`, `ImageProcessor`, `SitePublisher` declared, unimplemented |
+| Authentication | argon2id passwords, scs sessions in Postgres, login rate limit per IP, CSRF via `http.CrossOriginProtection`, `cmd/adduser` |
+| Contracts | `ProductRepository`, `UserRepository`, `SessionRepository` implemented (`internal/repository/product.go`); `ImageStore`, `ImageProcessor`, `SitePublisher` declared, unimplemented |
 | Architecture guard | `internal/architecture_test.go` fails on any import AGENTS.md §2 forbids, or `os.Getenv` in `internal/` |
 | Packaging | Dockerfile, `fly.toml`, Makefile, GitHub Actions CI |
 
@@ -49,7 +57,7 @@ The consequence worth internalising: **if this backend is down, asleep or mid-de
 
 ### Not done
 
-Everything that makes it an admin. There are **no screens and no authentication**; there is no service layer for products yet. The `/admin` route returns a placeholder paragraph.
+Everything that makes it an admin. Login works, but there are **no product screens** and no service layer for products yet. `/admin` shows a placeholder page with a logout button.
 
 The three remaining contracts in `internal/repository/contracts.go` and `internal/storage/contracts.go` are declared and unimplemented on purpose: they describe the shape of the work ahead. The human has been told this and may yet decide to declare each port only when implementing it — **ask before assuming either way**.
 
@@ -76,7 +84,7 @@ This is enforced by `internal/architecture_test.go`, which was validated by plan
 Make products manageable. In rough order:
 
 1. ~~**`internal/repository/product.go`** implementing `ProductRepository`.~~ Done. Create/Update leave `Images` alone (photos are M2); Create appends at the end of the catalogue. Delete does not remove R2 files: the service must read the keys first.
-2. **Authentication.** Sessions via `alexedwards/scs` stored in Postgres, argon2id passwords, **no public signup**, users created by `cmd/adduser`. Login rate-limited per IP.
+2. ~~**Authentication.**~~ Done. Sessions via `alexedwards/scs` in Postgres, argon2id, no public signup, `cmd/adduser`, login rate-limited per IP. There is no way yet to change a password or remove a user except SQL; step 4 covers the first.
 3. **CRUD screens** in `html/template` + HTMX, embedded with `go:embed`. No build step for the admin.
 4. **Password reset by email** via Resend. Treat this as required, not optional: if the owners lock themselves out and need the developer, the whole point is lost.
 
@@ -146,4 +154,5 @@ The honest end-to-end test for M1 is not a passing suite: it is one of the shop 
 - ~~`sqlc` or hand-written queries?~~ AGENTS.md settles it: hand-written SQL over `database/sql`.
 - The Fly app has never been deployed. Who creates it, and when?
 - ~~`bfc6058` not pushed~~ It is on `origin/master`.
+- Nobody has an account yet. Who should, and with which emails? Run `fly ssh console -C "/adduser -email …"` once the app is deployed.
 - The integration tests run against the Neon branch named `production` (approved while pre-launch). Once real products exist, they need a separate Neon branch.
