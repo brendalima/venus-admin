@@ -4,10 +4,11 @@ package storage
 
 import "context"
 
-// ImageStore keeps the photo files (Cloudflare R2).
+// ImageStore keeps the photo files (Cloudflare R2). Callers keep only the
+// key; the public URL is built from the bucket's base URL.
 type ImageStore interface {
-	// Put stores one processed image and returns its public URL.
-	Put(ctx context.Context, key string, data []byte, contentType string) (string, error)
+	// Put stores one processed image under key.
+	Put(ctx context.Context, key string, data []byte, contentType string) error
 	Delete(ctx context.Context, key string) error
 }
 
