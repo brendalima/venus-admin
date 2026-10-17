@@ -1,0 +1,58 @@
+{{define "base"}}<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{block "title" .}}Vênus Oasis{{end}} — Admin</title>
+<style>
+  :root {
+    --bg: #faf7f4; --surface: #fff; --text: #2b2420; --muted: #75685f;
+    --accent: #b5543c; --accent-text: #fff; --border: #e4dcd5;
+    --error-bg: #fbeae5; --error-text: #8a2c17;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; padding: .75rem 1rem; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  header strong { font-size: 1.1rem; }
+  main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: .75rem; padding: 1.5rem;
+  }
+  label { display: block; font-weight: 600; margin: 1rem 0 .25rem; }
+  input[type=email], input[type=password] {
+    width: 100%; padding: .75rem; font: inherit; color: inherit;
+    border: 1px solid var(--border); border-radius: .5rem; background: #fff;
+  }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    padding: .75rem 1.25rem; border-radius: .5rem; border: 0;
+    background: var(--accent); color: var(--accent-text);
+  }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); padding: .5rem 1rem; }
+  form.inline { margin: 0; }
+  .full { width: 100%; margin-top: 1.5rem; }
+  .alert {
+    background: var(--error-bg); color: var(--error-text);
+    border-radius: .5rem; padding: .75rem 1rem; margin-bottom: 1rem;
+  }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+{{block "header" .}}{{end}}
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

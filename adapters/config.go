@@ -26,6 +26,12 @@ type Config struct {
 	Env         Env
 	Port        int
 	DatabaseURL string
+
+	// ClientIPHeader names the header a reverse proxy puts the client's
+	// IP in (Fly-Client-IP on Fly). Leave it empty when nothing sits in
+	// front of the server: the header would then come from the client,
+	// who could change it to dodge the login rate limit.
+	ClientIPHeader string
 }
 
 func (c Config) IsProd() bool { return c.Env == EnvProd }
@@ -40,9 +46,10 @@ func LoadConfig() (Config, error) {
 	}
 
 	cfg := Config{
-		Env:         EnvDev,
-		Port:        8080,
-		DatabaseURL: databaseURL(),
+		Env:            EnvDev,
+		Port:           8080,
+		DatabaseURL:    databaseURL(),
+		ClientIPHeader: strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
 	}
 
 	if v := strings.TrimSpace(os.Getenv("APP_ENV")); v != "" {

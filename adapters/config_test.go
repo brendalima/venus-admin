@@ -4,7 +4,7 @@ import "testing"
 
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
-	for _, k := range []string{"APP_ENV", "PORT", "DATABASE_URL", "DATABASE_URL_UNPOOLED"} {
+	for _, k := range []string{"APP_ENV", "PORT", "DATABASE_URL", "DATABASE_URL_UNPOOLED", "CLIENT_IP_HEADER"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -31,6 +31,11 @@ func TestLoadConfig(t *testing.T) {
 				"DATABASE_URL_UNPOOLED": "postgres://direct/db",
 			},
 			want: Config{Env: EnvProd, Port: 9000, DatabaseURL: "postgres://direct/db"},
+		},
+		{
+			name: "client IP header behind a proxy",
+			env:  map[string]string{"DATABASE_URL": "x", "CLIENT_IP_HEADER": " Fly-Client-IP "},
+			want: Config{Env: EnvDev, Port: 8080, DatabaseURL: "x", ClientIPHeader: "Fly-Client-IP"},
 		},
 		{name: "missing database", env: map[string]string{}, wantErr: true},
 		{name: "unknown environment", env: map[string]string{"APP_ENV": "production", "DATABASE_URL": "x"}, wantErr: true},

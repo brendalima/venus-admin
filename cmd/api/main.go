@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/brendalima/venus-admin/adapters"
 	"github.com/brendalima/venus-admin/internal/core/services"
@@ -48,20 +49,45 @@ func run() error {
 	defer db.Close()
 
 	hRepository := repository.MustNewHealth(db)
+	uRepository := repository.MustNewUser(db)
+	sRepository := repository.MustNewSession(db)
+
 	hService := services.MustNewHealth(hRepository)
+	uService := services.MustNewUser(uRepository, sRepository)
+
+	templates := rest.MustNewTemplates()
+	sessions := rest.MustNewSessionManager(sRepository, cfg.IsProd())
 	rHealth := rest.MustNewHealth(hService)
-	rAdmin := &rest.Admin{}
+	rAuth := rest.MustNewAuth(rest.AuthInput{
+		Service:  uService,
+		Sessions: sessions,
+		// Ten tries in fifteen minutes is plenty for someone who mistypes,
+		// and makes guessing a password hopeless.
+		Limiter:        rest.NewLoginLimiter(10, 15*time.Minute),
+		Templates:      templates,
+		ClientIPHeader: cfg.ClientIPHeader,
+	})
+	rAdmin := rest.MustNewAdmin(templates)
+
+	// Everything a person sees goes through the session; the health
+	// checks stay outside it, so they never touch the database.
+	app := http.NewServeMux()
+	app.HandleFunc("GET /{$}", rAdmin.Home)
+	app.HandleFunc("GET /login", rAuth.LoginPage)
+	app.HandleFunc("POST /login", rAuth.Login)
+	app.HandleFunc("POST /logout", rAuth.Logout)
+	app.Handle("GET /admin", rAuth.RequireLogin(http.HandlerFunc(rAdmin.Index)))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", rHealth.Live)
 	mux.HandleFunc("GET /readyz", rHealth.Ready)
-	mux.HandleFunc("GET /{$}", rAdmin.Home)
-	mux.HandleFunc("GET /admin", rAdmin.Index)
+	mux.Handle("/", sessions.LoadAndSave(app))
 
 	handler := rest.Chain(mux,
 		rest.RecoverPanics(logger),
 		rest.LogRequests(logger),
 		rest.SecureHeaders,
+		rest.RejectCrossOrigin,
 	)
 
 	return serve(ctx, logger, newServer(cfg.Addr(), handler))
