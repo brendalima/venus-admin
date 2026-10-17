@@ -7,9 +7,6 @@
 .env.*
 !.env-sample
 
-# dependencies of the neon.ts tooling (this is not a Node project)
-/node_modules/
-
 # test coverage
 *.out
 coverage.html
