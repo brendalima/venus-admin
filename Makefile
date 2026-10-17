@@ -13,6 +13,10 @@ run: ## Run the API in development mode
 migrate: ## Apply pending database migrations
 	go run ./cmd/migrate
 
+.PHONY: adduser
+adduser: ## Give someone access to the admin (asks for email and password)
+	go run ./cmd/adduser
+
 .PHONY: build
 build: ## Build every binary into bin/
 	go build -trimpath -o bin/ ./cmd/...
