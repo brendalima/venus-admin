@@ -15,6 +15,10 @@ type User struct {
 	// is never stored.
 	PasswordHash string
 
+	// PasswordVersion goes up each time the password changes. A session
+	// started under an older version is no longer valid.
+	PasswordVersion int
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

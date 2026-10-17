@@ -53,6 +53,9 @@ func run() error {
 	uRepository := repository.MustNewUser(db)
 	sRepository := repository.MustNewSession(db)
 	pRepository := repository.MustNewProduct(db)
+	prRepository := repository.MustNewPasswordReset(db)
+
+	mailer := newMailer(cfg, logger)
 
 	imageStore := newImageStore(cfg, logger)
 
@@ -64,6 +67,12 @@ func run() error {
 		Processor: storage.NewJPEGProcessor(),
 	})
 	siteService := newSiteService(cfg, logger, pRepository)
+	prService := services.MustNewPasswordReset(services.PasswordResetInput{
+		Users:   uRepository,
+		Resets:  prRepository,
+		Mailer:  mailer,
+		BaseURL: cfg.PublicURL,
+	})
 
 	templates := rest.MustNewTemplates(cfg.ImageBaseURL)
 	sessions := rest.MustNewSessionManager(sRepository, cfg.IsProd())
@@ -83,6 +92,15 @@ func run() error {
 		Sessions:  sessions,
 		Templates: templates,
 	})
+	rPasswordReset := rest.MustNewPasswordReset(rest.PasswordResetInput{
+		Service:  prService,
+		Sessions: sessions,
+		// Each request may send an email; the service also caps links per
+		// account, so this only stops one address from spraying many.
+		Limiter:        rest.NewLoginLimiter(5, 15*time.Minute),
+		Templates:      templates,
+		ClientIPHeader: cfg.ClientIPHeader,
+	})
 	private := func(h http.HandlerFunc) http.Handler { return rAuth.RequireLogin(h) }
 
 	// Everything a person sees goes through the session; the health
@@ -93,6 +111,10 @@ func run() error {
 	app.HandleFunc("GET /login", rAuth.LoginPage)
 	app.HandleFunc("POST /login", rAuth.Login)
 	app.HandleFunc("POST /logout", rAuth.Logout)
+	app.HandleFunc("GET /forgot-password", rPasswordReset.ForgotPage)
+	app.HandleFunc("POST /forgot-password", rPasswordReset.Forgot)
+	app.HandleFunc("GET /reset-password", rPasswordReset.ResetPage)
+	app.HandleFunc("POST /reset-password", rPasswordReset.Reset)
 	app.Handle("GET /admin", private(rProduct.List))
 	app.Handle("GET /admin/products/new", private(rProduct.New))
 	app.Handle("POST /admin/products", private(rProduct.Create))
@@ -161,6 +183,16 @@ func newSiteService(cfg adapters.Config, logger *slog.Logger, repo repository.Si
 		Publisher:  storage.LogPublisher{},
 		CanPublish: !cfg.IsProd(),
 	})
+}
+
+// newMailer sends through Resend when a key is configured. Config only
+// allows going without one in development, where emails are logged.
+func newMailer(cfg adapters.Config, logger *slog.Logger) storage.Mailer {
+	if cfg.ResendAPIKey == "" {
+		logger.Warn("no RESEND_API_KEY: emails will be logged, not sent")
+		return storage.LogMailer{}
+	}
+	return storage.MustNewResend(storage.ResendInput{APIKey: cfg.ResendAPIKey, From: cfg.MailFrom})
 }
 
 func newLogger(cfg adapters.Config) *slog.Logger {

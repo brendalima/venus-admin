@@ -15,7 +15,7 @@ import (
 var _ UserRepository = (*User)(nil)
 
 const (
-	userColumns = `id, email, password_hash, created_at, updated_at`
+	userColumns = `id, email, password_hash, password_version, created_at, updated_at`
 
 	adminUsersEmailKey = "admin_users_email_key"
 )
@@ -43,9 +43,9 @@ func (r *User) Create(ctx context.Context, u domain.User) (domain.User, error) {
 	err := r.db.QueryRowContext(ctx,
 		`INSERT INTO admin_users (id, email, password_hash)
 		 VALUES ($1, $2, $3)
-		 RETURNING created_at, updated_at`,
+		 RETURNING password_version, created_at, updated_at`,
 		u.ID, u.Email, u.PasswordHash,
-	).Scan(&u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.PasswordVersion, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == adminUsersEmailKey {
@@ -68,9 +68,7 @@ func (r *User) GetByEmail(ctx context.Context, email string) (domain.User, error
 }
 
 func (r *User) getOne(ctx context.Context, query string, arg any) (domain.User, error) {
-	var u domain.User
-	err := r.db.QueryRowContext(ctx, query, arg).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(r.db.QueryRowContext(ctx, query, arg))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, domain.NewNotFoundError("user not found")
 	}
@@ -78,4 +76,11 @@ func (r *User) getOne(ctx context.Context, query string, arg any) (domain.User, 
 		return domain.User{}, fmt.Errorf("couldn't get user: %w", err)
 	}
 	return u, nil
+}
+
+// scanUser reads a row selected as userColumns.
+func scanUser(row *sql.Row) (domain.User, error) {
+	var u domain.User
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.PasswordVersion, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
 }
