@@ -29,3 +29,20 @@ type ProductRepository interface {
 	HasUnpublishedChanges(ctx context.Context) (bool, error)
 	MarkPublished(ctx context.Context) error
 }
+
+// UserRepository persists the people allowed into the admin. Emails
+// arrive already normalised by the service.
+type UserRepository interface {
+	Create(ctx context.Context, u domain.User) (domain.User, error)
+	GetByID(ctx context.Context, id string) (domain.User, error)
+	GetByEmail(ctx context.Context, email string) (domain.User, error)
+}
+
+// SessionRepository is the housekeeping side of the session store. The
+// same type also implements scs.CtxStore, which cmd/api hands to the
+// session manager; the services only ever need to tidy up.
+type SessionRepository interface {
+	// DeleteExpired removes sessions past their expiry and returns how
+	// many went.
+	DeleteExpired(ctx context.Context) (int64, error)
+}

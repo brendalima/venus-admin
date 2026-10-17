@@ -48,7 +48,7 @@ func TestSchemaIsApplied(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 
-	for _, table := range []string{"products", "product_images", "site_state"} {
+	for _, table := range []string{"products", "product_images", "site_state", "admin_users", "sessions"} {
 		var exists bool
 		err := db.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
@@ -163,6 +163,7 @@ func TestIDsAreUUIDsWithoutDefault(t *testing.T) {
 		{"products", "id"},
 		{"product_images", "id"},
 		{"product_images", "product_id"},
+		{"admin_users", "id"},
 	}
 
 	for _, tt := range tests {
