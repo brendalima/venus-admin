@@ -1,0 +1,14 @@
+# flyctl launch added from .gitignore
+# binaries
+bin
+
+# secrets — never commit
+# .env.local is written by `neon init` and carries the database password
+**/.env
+**/.env.*
+!**/.env-sample
+
+# test coverage
+**/*.out
+**/coverage.html
+fly.toml

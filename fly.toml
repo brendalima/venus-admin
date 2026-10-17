@@ -1,45 +1,35 @@
-# Fly.io — Vênus Oasis admin.
-# Region gru (São Paulo), the same as the Neon database.
+# fly.toml app configuration file generated for venus-admin on 2026-10-17T18:26:20-03:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "venus-admin"
-primary_region = "gru"
+app = 'venus-admin'
+primary_region = 'gru'
 
 [build]
-
-# Migrations run once per deploy, in a temporary machine, before the new
-# version starts. The API never migrates on its own startup.
 [deploy]
-  release_command = "/migrate"
+  release_command = '/migrate'
 
 [env]
-  APP_ENV = "prod"
-  PORT = "8080"
-  # Fly's proxy puts the visitor's address here; the login rate limit
-  # keys on it. RemoteAddr would be the proxy for everyone.
-  CLIENT_IP_HEADER = "Fly-Client-IP"
+  APP_ENV = 'prod'
+  CLIENT_IP_HEADER = 'Fly-Client-IP'
+  PORT = '8080'
 
 [http_service]
   internal_port = 8080
   force_https = true
-
-  # The machine stops when nobody is using the admin and starts again on
-  # the next request. A Go binary boots in tens of milliseconds, so "stop"
-  # (the cheaper option) is enough — "suspend" would only pay off if the
-  # boot were slow.
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
-  # Points at /healthz, which deliberately does not touch the database:
-  # Neon's free tier sleeps, and that does not mean the machine is sick.
   [[http_service.checks]]
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-    method = "GET"
-    path = "/healthz"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
