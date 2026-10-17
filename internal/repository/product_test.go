@@ -22,12 +22,12 @@ func testDB(t *testing.T) *sql.DB {
 	_ = godotenv.Load("../../.env.local")
 	_ = godotenv.Load("../../.env")
 
-	dsn := os.Getenv("DATABASE_URL_UNPOOLED")
+	// Only the dedicated test branch: these tests write and delete rows,
+	// so they must never fall back to DATABASE_URL, which is dev's or
+	// production's.
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping integration test")
+		t.Skip("no TEST_DATABASE_URL — skipping integration test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -152,7 +152,7 @@ The honest end-to-end test for M1 is not a passing suite: it is one of the shop 
 
 - Should the three unimplemented contracts stay declared, or be introduced one at a time as each adapter lands?
 - ~~`sqlc` or hand-written queries?~~ AGENTS.md settles it: hand-written SQL over `database/sql`.
-- The Fly app has never been deployed. Who creates it, and when?
+- ~~The Fly app has never been deployed.~~ The app `venus-admin` exists on Fly (created by the human with `fly launch`), still without secrets or a deploy. Deploys run from `.github/workflows/fly-deploy.yml` after CI passes on `master`; it needs `FLY_API_TOKEN` in GitHub and `DATABASE_URL_UNPOOLED` (Neon `production`) in `fly secrets`.
 - ~~`bfc6058` not pushed~~ It is on `origin/master`.
 - Nobody has an account yet. Who should, and with which emails? Run `fly ssh console -C "/adduser -email …"` once the app is deployed.
-- The integration tests run against the Neon branch named `production` (approved while pre-launch). Once real products exist, they need a separate Neon branch.
+- ~~Integration tests run against `production`.~~ They now use the Neon branch `test` through `TEST_DATABASE_URL` only, and local development uses `dev`. See the README's Environments section.

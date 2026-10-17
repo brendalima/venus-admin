@@ -132,6 +132,20 @@ make test                            # integration tests skip without a database
 go test ./adapters/ -v                # with .env.local present, they really run
 ```
 
+## Environments
+
+Three Neon branches, one per purpose:
+
+| Neon branch | Used by | Connection string lives in |
+|---|---|---|
+| `production` | the app on Fly | `fly secrets` (`DATABASE_URL_UNPOOLED`) |
+| `dev` | `make run`, `make migrate`, `make adduser` on your machine | `.env.local` (`DATABASE_URL`, `DATABASE_URL_UNPOOLED`) |
+| `test` | the integration tests, migrated from scratch by the tests | `.env.local` (`TEST_DATABASE_URL`) |
+
+`test` started schema-only and holds no production data. Integration tests read **only** `TEST_DATABASE_URL`, so they cannot reach `dev` or `production` by accident.
+
+Shipping to production is a pull request merged into `master`: CI runs on the merge, and `.github/workflows/fly-deploy.yml` deploys only once CI has passed. `fly deploy` runs `/migrate` first (`release_command`), so a migration that fails stops the deploy.
+
 ## Configuration
 
 Everything through environment variables — what Fly expects (`fly secrets`), and it keeps credentials out of the repository.
@@ -143,6 +157,7 @@ Everything through environment variables — what Fly expects (`fly secrets`), a
 | `DATABASE_URL_UNPOOLED` | — | one of the two (preferred) |
 | `DATABASE_URL` | — | one of the two |
 | `CLIENT_IP_HEADER` | — | no; `Fly-Client-IP` on Fly (set in `fly.toml`) |
+| `TEST_DATABASE_URL` | — | tests only; integration tests skip without it |
 
 New variables go into `.env-sample`.
 
@@ -150,11 +165,14 @@ New variables go into `.env-sample`.
 
 Fly.io, region `gru` (São Paulo), a 256 MB machine that **stops when unused** and starts again on the next request.
 
+Automatic on every merge into `master` (see Environments). One-time setup:
+
 ```bash
-fly launch --no-deploy   # first time
-fly secrets set DATABASE_URL_UNPOOLED="..."
-fly deploy               # runs /migrate, then starts /api
+fly secrets set DATABASE_URL_UNPOOLED="$(neon cs production --project-id dry-water-16084849)"
+fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 ```
+
+`fly deploy` by hand still works for an emergency; it runs `/migrate`, then starts `/api`.
 
 ## Status
 
