@@ -10,7 +10,7 @@ import (
 
 // Product is a piece in the catalogue.
 type Product struct {
-	ID   int64
+	ID   string
 	Slug string
 	Name string
 

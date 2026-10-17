@@ -36,8 +36,8 @@ func (v View) Valid() bool {
 // pixels (600 on 2x screens) and the product page at roughly 440 (1200
 // covers large displays).
 type Image struct {
-	ID        int64
-	ProductID int64
+	ID        string
+	ProductID string
 	View      View
 	URL600    string
 	URL1200   string
