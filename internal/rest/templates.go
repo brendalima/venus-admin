@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // The screens are embedded in the binary: there is no build step for the
@@ -34,7 +35,7 @@ func NewTemplates() (*Templates, error) {
 		if page == "templates/base.html" {
 			continue
 		}
-		tmpl, err := template.ParseFS(templatesFS, "templates/base.html", page)
+		tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(templatesFS, "templates/base.html", page)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't parse %s: %w", page, err)
 		}
@@ -51,9 +52,25 @@ func MustNewTemplates() *Templates {
 	return t
 }
 
-// render writes page with status. It executes into a buffer first, so a
-// template error becomes a clean 500 instead of half a page.
+var templateFuncs = template.FuncMap{
+	"reais": formatReais,
+	"join":  strings.Join,
+}
+
+// render writes page, inside the layout, with status.
 func (t *Templates) render(w http.ResponseWriter, r *http.Request, status int, page string, data any) {
+	t.renderTemplate(w, r, status, page, "base", data)
+}
+
+// renderFragment writes one template defined in page, without the
+// layout: the piece of HTML an HTMX request swaps in.
+func (t *Templates) renderFragment(w http.ResponseWriter, r *http.Request, status int, page, name string, data any) {
+	t.renderTemplate(w, r, status, page, name, data)
+}
+
+// renderTemplate executes into a buffer first, so a template error becomes
+// a clean 500 instead of half a page.
+func (t *Templates) renderTemplate(w http.ResponseWriter, r *http.Request, status int, page, name string, data any) {
 	tmpl, ok := t.pages[page]
 	if !ok {
 		slog.ErrorContext(r.Context(), "unknown template", "page", page)
@@ -62,8 +79,8 @@ func (t *Templates) render(w http.ResponseWriter, r *http.Request, status int, p
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "base", data); err != nil {
-		slog.ErrorContext(r.Context(), "couldn't render template", "page", page, "error", err)
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		slog.ErrorContext(r.Context(), "couldn't render template", "page", page, "template", name, "error", err)
 		http.Error(w, "Erro interno", http.StatusInternalServerError)
 		return
 	}

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -54,6 +55,15 @@ func TestValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid product rejected: %v", err)
 	}
+	// Pieces can be catalogued before they are priced.
+	unpriced := valid
+	unpriced.PriceCents = 0
+	if err := unpriced.Validate(); err != nil {
+		t.Errorf("product without a price rejected: %v", err)
+	}
+	if unpriced.HasPrice() || !valid.HasPrice() {
+		t.Error("HasPrice does not follow the price")
+	}
 
 	tests := []struct {
 		name  string
@@ -61,9 +71,10 @@ func TestValidate(t *testing.T) {
 		field string
 	}{
 		{"missing name", func(p *Product) { p.Name = "" }, "name"},
-		{"zero price", func(p *Product) { p.PriceCents = 0 }, "price"},
 		{"negative price", func(p *Product) { p.PriceCents = -1 }, "price"},
+		{"blank name", func(p *Product) { p.Name = "   " }, "name"},
 		{"no sizes", func(p *Product) { p.Sizes = nil }, "sizes"},
+		{"unknown size", func(p *Product) { p.Sizes = []string{"P", "XG"} }, "sizes"},
 		{"missing slug", func(p *Product) { p.Slug = "" }, "slug"},
 	}
 
@@ -90,5 +101,47 @@ func TestValidate(t *testing.T) {
 				t.Error("validation message is empty")
 			}
 		})
+	}
+}
+
+func TestValidateReportsEveryField(t *testing.T) {
+	err := Product{}.Validate()
+
+	var joined interface{ Unwrap() []error }
+	if !errors.As(err, &joined) {
+		t.Fatalf("err = %v, want the errors joined", err)
+	}
+	var got []string
+	for _, e := range joined.Unwrap() {
+		var ve *ValidationError
+		if errors.As(e, &ve) {
+			got = append(got, ve.Field)
+		}
+	}
+	// No slug error: with no name, the missing name is the whole story.
+	want := []string{"name", "sizes"}
+	if !slices.Equal(got, want) {
+		t.Errorf("fields = %v, want %v", got, want)
+	}
+}
+
+func TestNormalized(t *testing.T) {
+	p := Product{
+		Name:        "  Biquíni Aurora ",
+		Description: " Triângulo \n",
+		Sizes:       []string{"GG", "P", "XG", "P"},
+		Details:     []string{" Verde ", "", "  ", "Forro duplo"},
+	}.Normalized()
+
+	if p.Name != "Biquíni Aurora" || p.Description != "Triângulo" {
+		t.Errorf("name %q, description %q, want them trimmed", p.Name, p.Description)
+	}
+	// Known sizes in display order; an unknown one is kept so Validate
+	// can reject it rather than have it vanish silently.
+	if want := []string{"P", "GG", "XG"}; !slices.Equal(p.Sizes, want) {
+		t.Errorf("sizes = %v, want %v", p.Sizes, want)
+	}
+	if want := []string{"Verde", "Forro duplo"}; !slices.Equal(p.Details, want) {
+		t.Errorf("details = %v, want %v", p.Details, want)
 	}
 }

@@ -3,7 +3,9 @@
 package domain
 
 import (
+	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,6 +19,10 @@ type Product struct {
 	// PriceCents is an integer, never a float. In floating point
 	// 29.90 * 3 yields 89.69999999999999; prices are entered in reais by
 	// the admin and converted to cents at the edge.
+	//
+	// Zero means the price is not set yet: the owners are cataloguing
+	// pieces before pricing them. Nothing is sold for free, so zero is
+	// free to mean that, and the column needs no NULL.
 	PriceCents int64
 
 	Sizes       []string
@@ -30,6 +36,9 @@ type Product struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// HasPrice reports whether the price has been set.
+func (p Product) HasPrice() bool { return p.PriceCents > 0 }
 
 // Cover is the photo shown on the catalogue card: the first one.
 func (p Product) Cover() (Image, bool) {
@@ -61,20 +70,69 @@ func Slugify(name string) string {
 	return strings.Trim(s, "-")
 }
 
-// Validate checks the rules the database constraints cannot express well
-// enough to produce a decent message.
-func (p Product) Validate() error {
-	switch {
-	case len(p.Name) == 0:
-		return NewValidationError("name", "Falta o nome da peça")
-	case p.PriceCents < 0:
-		return NewValidationError("price", "O preço não pode ser negativo")
-	case p.PriceCents == 0:
-		return NewValidationError("price", "Falta o preço")
-	case len(p.Sizes) == 0:
-		return NewValidationError("sizes", "Escolha ao menos um tamanho")
-	case p.Slug == "":
-		return NewValidationError("slug", "Não consegui gerar o endereço a partir do nome")
+// AllSizes lists the sizes a product can come in, in display order. A
+// closed list, because free typing turns into "G", "g " and "Grande".
+func AllSizes() []string {
+	return []string{"P", "M", "G", "GG"}
+}
+
+// Normalized trims what people type and puts the lists in a consistent
+// shape: sizes in display order without repeats, and no blank details.
+func (p Product) Normalized() Product {
+	p.Name = strings.TrimSpace(p.Name)
+	p.Description = strings.TrimSpace(p.Description)
+
+	var sizes []string
+	for _, s := range AllSizes() {
+		if slices.Contains(p.Sizes, s) {
+			sizes = append(sizes, s)
+		}
 	}
-	return nil
+	for _, s := range p.Sizes {
+		if !slices.Contains(AllSizes(), s) && !slices.Contains(sizes, s) {
+			sizes = append(sizes, s)
+		}
+	}
+	p.Sizes = sizes
+
+	var details []string
+	for _, d := range p.Details {
+		if d = strings.TrimSpace(d); d != "" {
+			details = append(details, d)
+		}
+	}
+	p.Details = details
+	return p
+}
+
+// Validate checks the rules the database constraints cannot express well
+// enough to produce a decent message. It reports every problem at once,
+// joined, so the form can mark all the fields in one go instead of one
+// per attempt.
+func (p Product) Validate() error {
+	var errs []error
+	if strings.TrimSpace(p.Name) == "" {
+		errs = append(errs, NewValidationError("name", "Falta o nome da peça"))
+	}
+
+	if p.PriceCents < 0 {
+		errs = append(errs, NewValidationError("price", "O preço não pode ser negativo"))
+	}
+
+	if len(p.Sizes) == 0 {
+		errs = append(errs, NewValidationError("sizes", "Escolha ao menos um tamanho"))
+	}
+	for _, s := range p.Sizes {
+		if !slices.Contains(AllSizes(), s) {
+			errs = append(errs, NewValidationError("sizes", "Tamanho desconhecido: "+s))
+			break
+		}
+	}
+
+	// Without a name there is nothing to build the slug from, and the
+	// missing name already says so.
+	if p.Slug == "" && strings.TrimSpace(p.Name) != "" {
+		errs = append(errs, NewValidationError("slug", "Não consegui gerar o endereço a partir do nome"))
+	}
+	return errors.Join(errs...)
 }

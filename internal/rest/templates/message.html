@@ -1,0 +1,11 @@
+{{define "title"}}{{.Title}}{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>{{.Title}}</h1>
+  <p>{{.Text}}</p>
+  <p><a href="/admin">Voltar para as peças</a></p>
+</div>
+{{end}}
