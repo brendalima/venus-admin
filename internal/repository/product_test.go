@@ -65,13 +65,13 @@ func newTestProduct(t *testing.T, db *sql.DB) domain.Product {
 	}
 }
 
-func insertImage(t *testing.T, db *sql.DB, productID string, view domain.View, position int) string {
+func insertImage(t *testing.T, db *sql.DB, productID string, position int) string {
 	t.Helper()
 	id := uuid.New().String()
 	_, err := db.ExecContext(context.Background(),
-		`INSERT INTO product_images (id, product_id, label, url_600, url_1200, r2_key_600, r2_key_1200, position)
-		 VALUES ($1, $2, $3, 'u600', 'u1200', 'k600', 'k1200', $4)`,
-		id, productID, view, position)
+		`INSERT INTO product_images (id, product_id, key_600, key_1200, position)
+		 VALUES ($1, $2, 'k600', 'k1200', $3)`,
+		id, productID, position)
 	if err != nil {
 		t.Fatalf("inserting image: %v", err)
 	}
@@ -133,8 +133,8 @@ func TestProductImagesComeInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating: %v", err)
 	}
-	back := insertImage(t, db, p.ID, domain.ViewBack, 2)
-	front := insertImage(t, db, p.ID, domain.ViewFront, 1)
+	second := insertImage(t, db, p.ID, 2)
+	first := insertImage(t, db, p.ID, 1)
 
 	got, err := repo.GetByID(ctx, p.ID)
 	if err != nil {
@@ -144,11 +144,11 @@ func TestProductImagesComeInOrder(t *testing.T) {
 		t.Fatalf("got %d images, want 2", len(got.Images))
 	}
 	cover, _ := got.Cover()
-	if cover.ID != front || cover.View != domain.ViewFront {
-		t.Errorf("cover = %+v, want the front image at position 1", cover)
+	if cover.ID != first || cover.Key600 != "k600" {
+		t.Errorf("cover = %+v, want the image at position 1", cover)
 	}
-	if got.Images[1].ID != back {
-		t.Errorf("second image = %s, want %s", got.Images[1].ID, back)
+	if got.Images[1].ID != second {
+		t.Errorf("second image = %s, want %s", got.Images[1].ID, second)
 	}
 
 	list, err := repo.List(ctx)
@@ -265,7 +265,7 @@ func TestProductDeleteCascadesToImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating: %v", err)
 	}
-	insertImage(t, db, p.ID, domain.ViewFront, 1)
+	insertImage(t, db, p.ID, 1)
 
 	if err := repo.Delete(ctx, p.ID); err != nil {
 		t.Fatalf("deleting: %v", err)
@@ -312,7 +312,7 @@ func TestUnpublishedChanges(t *testing.T) {
 		change func() error
 	}{
 		{"update", func() error { p.Name = "Outro Nome"; _, err := repo.Update(ctx, p); return err }},
-		{"image added", func() error { insertImage(t, db, p.ID, domain.ViewFront, 1); return nil }},
+		{"image added", func() error { insertImage(t, db, p.ID, 1); return nil }},
 		{"delete", func() error { return repo.Delete(ctx, p.ID) }},
 	}
 

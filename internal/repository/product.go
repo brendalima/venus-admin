@@ -16,7 +16,7 @@ var _ ProductRepository = (*Product)(nil)
 
 const (
 	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, created_at, updated_at`
-	imageColumns   = `id, product_id, label, url_600, url_1200, r2_key_600, r2_key_1200, position, created_at`
+	imageColumns   = `id, product_id, key_600, key_1200, position, created_at`
 
 	pgUniqueViolation = "23505"
 	productsSlugKey   = "products_slug_key"
@@ -129,7 +129,7 @@ func (r *Product) Update(ctx context.Context, p domain.Product) (domain.Product,
 }
 
 // Delete removes the product and, by cascade, its image rows. The files in
-// R2 are not the repository's to remove: the caller must read the keys
+// the bucket are not the repository's to remove: the caller must read the keys
 // first if it wants them gone.
 func (r *Product) Delete(ctx context.Context, id string) error {
 	if uuid.Validate(id) != nil {
@@ -215,8 +215,7 @@ func (r *Product) attachImages(ctx context.Context, products []domain.Product) e
 
 	for rows.Next() {
 		var img domain.Image
-		err := rows.Scan(&img.ID, &img.ProductID, &img.View, &img.URL600, &img.URL1200,
-			&img.Key600, &img.Key1200, &img.Position, &img.CreatedAt)
+		err := rows.Scan(&img.ID, &img.ProductID, &img.Key600, &img.Key1200, &img.Position, &img.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("couldn't read product image: %w", err)
 		}

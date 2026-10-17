@@ -25,7 +25,7 @@ adapters/                config from the environment, database connection,
                          embedded goose migrations (adapters/migrations/)
 internal/
   core/
-    domain/              entities (Product, Image, View), Slugify,
+    domain/              entities (Product, Image), Slugify,
                          validation, domain errors — stdlib only
     services/            business rules + contracts.go (what handlers use)
   repository/            SQL over database/sql + contracts.go

@@ -76,11 +76,5 @@ func (p Product) Validate() error {
 	case p.Slug == "":
 		return NewValidationError("slug", "Não consegui gerar o endereço a partir do nome")
 	}
-
-	for _, img := range p.Images {
-		if !img.View.Valid() {
-			return NewValidationError("images", "Ângulo de foto desconhecido: "+string(img.View))
-		}
-	}
 	return nil
 }

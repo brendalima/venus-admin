@@ -25,18 +25,6 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func TestViewValidation(t *testing.T) {
-	if !ViewFront.Valid() {
-		t.Error("ViewFront should be valid")
-	}
-	if View("atrás").Valid() {
-		t.Error("free text should not be a valid view")
-	}
-	if len(Views()) != 5 {
-		t.Errorf("Views() returned %d entries, want 5", len(Views()))
-	}
-}
-
 func TestCover(t *testing.T) {
 	empty := Product{}
 	if _, ok := empty.Cover(); ok {
@@ -44,15 +32,15 @@ func TestCover(t *testing.T) {
 	}
 
 	p := Product{Images: []Image{
-		{View: ViewFront, URL600: "first"},
-		{View: ViewBack, URL600: "second"},
+		{Key600: "first"},
+		{Key600: "second"},
 	}}
 	cover, ok := p.Cover()
 	if !ok {
 		t.Fatal("expected a cover")
 	}
-	if cover.URL600 != "first" {
-		t.Errorf("cover = %q, want the first image", cover.URL600)
+	if cover.Key600 != "first" {
+		t.Errorf("cover = %q, want the first image", cover.Key600)
 	}
 }
 
@@ -77,9 +65,6 @@ func TestValidate(t *testing.T) {
 		{"negative price", func(p *Product) { p.PriceCents = -1 }, "price"},
 		{"no sizes", func(p *Product) { p.Sizes = nil }, "sizes"},
 		{"missing slug", func(p *Product) { p.Slug = "" }, "slug"},
-		{"unknown view", func(p *Product) {
-			p.Images = []Image{{View: View("atrás")}}
-		}, "images"},
 	}
 
 	for _, tt := range tests {
