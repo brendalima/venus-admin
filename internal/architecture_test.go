@@ -1,56 +1,78 @@
-package catalog_test
+package internal_test
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 const modulePath = "github.com/brendalima/venus-admin"
 
-// The hexagon only holds if dependencies point inward: adapters know the
-// core, never the reverse. That rule is easy to break by accident with a
-// single convenient import, and the compiler will not complain — so it is
-// asserted here.
-func TestCoreDependsOnNothingInternal(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", modulePath+"/internal/catalog").Output()
-	if err != nil {
-		t.Skipf("could not run go list: %v", err)
-	}
+// forbidden lists, per layer, the direct imports AGENTS.md §2 rules out.
+// A prefix match is used, so "github.com/jackc/pgx" covers every subpackage.
+// The compiler will not catch a convenient but wrong import, so this does.
+var forbidden = map[string][]string{
+	"internal/core/domain": {
+		modulePath + "/",
+		"net/http", "database/sql", "github.com/jackc/pgx", "github.com/pressly/goose",
+	},
+	"internal/core/services": {
+		modulePath + "/adapters", modulePath + "/internal/rest", modulePath + "/internal/subscriber",
+		"net/http", "database/sql", "github.com/jackc/pgx",
+	},
+	"internal/repository": {
+		modulePath + "/internal/core/services", modulePath + "/internal/rest", modulePath + "/internal/subscriber",
+		"net/http",
+	},
+	"internal/storage": {
+		modulePath + "/internal/core/services", modulePath + "/internal/rest", modulePath + "/internal/repository",
+	},
+	"internal/rest": {
+		modulePath + "/internal/repository", modulePath + "/internal/storage", modulePath + "/adapters",
+		"database/sql", "github.com/jackc/pgx",
+	},
+}
 
-	for _, dep := range strings.Fields(string(out)) {
-		if !strings.HasPrefix(dep, modulePath) {
-			continue // standard library or third party, fine
-		}
-		if dep == modulePath+"/internal/catalog" {
-			continue // itself
-		}
-		t.Errorf("the core imports %s; it must depend on nothing inside the project", dep)
+func TestLayersRespectDependencyRules(t *testing.T) {
+	for layer, banned := range forbidden {
+		t.Run(layer, func(t *testing.T) {
+			out, err := exec.Command("go", "list", "-f", `{{join .Imports "\n"}}`, modulePath+"/"+layer).Output()
+			if err != nil {
+				t.Skipf("couldn't run go list: %v", err)
+			}
+
+			for _, imp := range strings.Fields(string(out)) {
+				for _, bad := range banned {
+					if strings.HasPrefix(imp, bad) {
+						t.Errorf("%s imports %s, which AGENTS.md forbids", layer, imp)
+					}
+				}
+			}
+		})
 	}
 }
 
-// The core must not reach for a driver, a framework or an HTTP package
-// either. Those belong behind a port.
-func TestCoreAvoidsInfrastructure(t *testing.T) {
-	forbidden := []string{
-		"net/http",
-		"database/sql",
-		"github.com/jackc/pgx",
-		"github.com/pressly/goose",
-		"github.com/aws/aws-sdk-go",
-	}
-
-	out, err := exec.Command("go", "list", "-deps", modulePath+"/internal/catalog").Output()
-	if err != nil {
-		t.Skipf("could not run go list: %v", err)
-	}
-
-	deps := strings.Fields(string(out))
-	for _, bad := range forbidden {
-		for _, dep := range deps {
-			if strings.HasPrefix(dep, bad) {
-				t.Errorf("the core imports %s; that belongs in an adapter", dep)
+// Configuration is read only in adapters/config.go and handed down
+// through constructors.
+func TestNoEnvironmentReadsInsideInternal(t *testing.T) {
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, call := range []string{"os.Getenv", "os.LookupEnv", "os.Environ"} {
+			if strings.Contains(string(src), call) {
+				t.Errorf("%s calls %s; read configuration in adapters/config.go", path, call)
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

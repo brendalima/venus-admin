@@ -1,4 +1,4 @@
-package web
+package rest
 
 import (
 	"log/slog"
@@ -28,7 +28,8 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
+// LogRequests writes one structured line per request.
+func LogRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -50,9 +51,9 @@ func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// recoverPanics keeps a panic in one handler from taking down the whole
+// RecoverPanics keeps a panic in one handler from taking down the whole
 // process, and every other in-flight request with it.
-func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
+func RecoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -72,12 +73,12 @@ func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// secureHeaders applies baseline security headers.
+// SecureHeaders applies baseline security headers.
 //
 // The CSP is restrictive from the start: the admin is server-rendered
 // HTML and needs no external script beyond HTMX, which is served from
 // /static.
-func secureHeaders(next http.Handler) http.Handler {
+func SecureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -91,9 +92,9 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// chain applies middleware in the order given: the first is outermost,
+// Chain applies middleware in the order given: the first is outermost,
 // meaning the first to see the request.
-func chain(h http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
+func Chain(h http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(mw) - 1; i >= 0; i-- {
 		h = mw[i](h)
 	}

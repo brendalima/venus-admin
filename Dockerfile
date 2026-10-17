@@ -17,16 +17,18 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -trimpath \
       -ldflags="-s -w" \
-      -o /out/server ./cmd/server
+      -o /out/ ./cmd/api ./cmd/migrate
 
 # ---------- runtime ----------
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /out/server /server
+COPY --from=build /out/api /out/migrate /
 
 # The unprivileged user comes from the :nonroot tag.
+# CMD rather than ENTRYPOINT so Fly's release_command ("/migrate") and
+# docker compose can swap the binary.
 EXPOSE 8080
-ENTRYPOINT ["/server"]
+CMD ["/api"]
 
 # ---------------------------------------------------------------------
 # When image processing with govips lands, this image changes, because

@@ -1,12 +1,11 @@
 # binaries
 /bin/
-/server
 
 # secrets — never commit
 # .env.local is written by `neon init` and carries the database password
 .env
 .env.*
-!.env.example
+!.env-sample
 
 # dependencies of the neon.ts tooling (this is not a Node project)
 /node_modules/

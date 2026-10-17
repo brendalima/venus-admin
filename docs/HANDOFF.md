@@ -4,6 +4,8 @@ For whoever picks up the next milestone. Everything below was verified against t
 
 Last verified: 2026-10-16 · commits `505c728` (pushed) and `bfc6058` (local only, not pushed).
 
+> **2026-10-17:** the layout was restructured to follow the new [AGENTS.md](../AGENTS.md). Paths below are updated; `internal/catalog` is now split into `internal/core/domain`, `internal/repository/contracts.go` and `internal/storage/contracts.go`. Migrations no longer run at API startup (`cmd/migrate` is Fly's `release_command`), the database layer uses `database/sql` over pgx, and the API now requires a database URL.
+
 ---
 
 ## 1. What this is, in one paragraph
@@ -31,21 +33,21 @@ The consequence worth internalising: **if this backend is down, asleep or mid-de
 |---|---|
 | HTTP server | `net/http` pattern routing, structured logging, panic recovery, security headers, graceful shutdown on SIGTERM |
 | Health checks | `/healthz` (liveness, no DB) and `/readyz` (readiness, DB) |
-| Configuration | Env-only, validated, `.env.local` auto-loaded in dev |
+| Configuration | Env-only, validated, `.env.local` auto-loaded in dev (`adapters/config.go`) |
 | Database | Neon Postgres 18, region `aws-sa-east-1`, connected and migrated |
 | Schema | `products`, `product_images`, `site_state` + `updated_at` trigger |
 | Domain model | `Product`, `Image`, `View`, `Slugify`, validation |
-| Ports | Four interfaces declared, **zero implemented** |
-| Architecture guard | Test fails if the core gains a forbidden import |
+| Contracts | `ProductRepository`, `ImageStore`, `ImageProcessor`, `SitePublisher` declared, **zero implemented** |
+| Architecture guard | `internal/architecture_test.go` fails on any import AGENTS.md §2 forbids, or `os.Getenv` in `internal/` |
 | Packaging | Dockerfile, `fly.toml`, Makefile, GitHub Actions CI |
 
-Test coverage: `catalog` 91.3%, `adapter/web` 91.5%, `platform/config` 83.3%, `platform/database` 70.0%. `make check` passes with `-race`.
+`make check` passes with `-race`.
 
 ### Not done
 
 Everything that makes it an admin. There are **no screens, no authentication, no persistence adapter**. The `/admin` route returns a placeholder paragraph.
 
-The four ports in `internal/catalog/ports.go` are declared and unimplemented on purpose: they describe the shape of the work ahead. The human has been told this and may yet decide to declare each port only when implementing it — **ask before assuming either way**.
+The four contracts in `internal/repository/contracts.go` and `internal/storage/contracts.go` are declared and unimplemented on purpose: they describe the shape of the work ahead. The human has been told this and may yet decide to declare each port only when implementing it — **ask before assuming either way**.
 
 ---
 
@@ -53,9 +55,9 @@ The four ports in `internal/catalog/ports.go` are declared and unimplemented on 
 
 Break these and the work gets reverted.
 
-**Hexagonal, dependencies pointing inward.** `internal/catalog` is the core: it imports nothing from this project, no driver, no framework. Adapters depend on the core, never the reverse. Ports live in the core so the core owns the contract.
+**Hexagonal, dependencies pointing inward**, laid out as AGENTS.md describes. `internal/core/domain` imports nothing from this project, no driver, no framework. Handlers depend on service interfaces; services depend on repository and storage interfaces.
 
-This is enforced by `internal/catalog/architecture_test.go`, which was validated by planting a violation and watching it fail. If you find it inconvenient, that is the test doing its job — put the dependency behind a port instead of weakening the test.
+This is enforced by `internal/architecture_test.go`, which was validated by planting a violation and watching it fail. If you find it inconvenient, that is the test doing its job — put the dependency behind a port instead of weakening the test.
 
 **Code in English, UI in Portuguese.** Comments, identifiers, logs, errors, docs and commit messages are English. Anything a shop owner reads stays Portuguese: view labels (`Frente`, `Costas`), validation messages (`"Falta o preço"`), the error page. This is not an oversight — translating them would defeat the goal of the owners operating alone.
 
@@ -69,7 +71,7 @@ This is enforced by `internal/catalog/architecture_test.go`, which was validated
 
 Make products manageable. In rough order:
 
-1. **`internal/adapter/postgres`** implementing `catalog.Repository`. The plan calls for `sqlc` — not installed locally, see §6.
+1. **`internal/repository/product.go`** implementing `ProductRepository` with SQL over `database/sql`. The plan calls for `sqlc` — not installed locally, see §6.
 2. **Authentication.** Sessions via `alexedwards/scs` stored in Postgres, argon2id passwords, **no public signup**, users created by `cmd/adduser`. Login rate-limited per IP.
 3. **CRUD screens** in `html/template` + HTMX, embedded with `go:embed`. No build step for the admin.
 4. **Password reset by email** via Resend. Treat this as required, not optional: if the owners lock themselves out and need the developer, the whole point is lost.
@@ -84,7 +86,7 @@ Each of these cost time already. They are not hypothetical.
 
 **`/healthz` must not touch the database.** Neon's free tier suspends when idle. Fly uses `/healthz` to judge machine health — if liveness depended on Postgres, the machine would be marked unhealthy every time the database napped, and restart in a loop. Readiness is where the DB check belongs.
 
-**Use the direct Neon connection, not the pooled one.** `DATABASE_URL_UNPOOLED`, not `DATABASE_URL`. pgx keeps its own pool; stacking it on PgBouncer's transaction pooling breaks the prepared statement cache. `internal/platform/config` already prefers the right one — do not "fix" it.
+**Use the direct Neon connection, not the pooled one.** `DATABASE_URL_UNPOOLED`, not `DATABASE_URL`. pgx keeps its own pool; stacking it on PgBouncer's transaction pooling breaks the prepared statement cache. `adapters/config.go` already prefers the right one — do not "fix" it.
 
 **`MinConns = 0` is deliberate.** An idle connection keeps Neon's compute awake and burns free-tier hours while nobody is using the admin.
 
@@ -123,9 +125,9 @@ Toolchain: Go 1.27.2 via asdf, pinned in `.tool-versions`. Node 22 via nvm at `~
 
 ```bash
 make check                               # gofmt, vet, tests with -race
-go test ./internal/catalog/ -run TestCore # the architecture guard specifically
-go test ./internal/platform/database/ -v  # integration; skips without a database
-make run                                  # then curl /healthz and /readyz
+go test ./internal/                       # the architecture guard specifically
+go test ./adapters/ -v                    # integration; skips without a database
+make migrate && make run                  # then curl /healthz and /readyz
 ```
 
 Integration tests skip silently when `DATABASE_URL` is absent, so **confirm they actually ran** rather than trusting a green suite.
@@ -136,7 +138,7 @@ The honest end-to-end test for M1 is not a passing suite: it is one of the shop 
 
 ## 8. Open questions for the human
 
-- Should the four unimplemented ports stay declared, or be introduced one at a time as each adapter lands?
-- `sqlc` codegen, or hand-written `pgx` queries? The plan says sqlc; the CLI is not installed.
+- Should the four unimplemented contracts stay declared, or be introduced one at a time as each adapter lands?
+- ~~`sqlc` or hand-written queries?~~ AGENTS.md settles it: hand-written SQL over `database/sql`.
 - The Fly app has never been deployed. Who creates it, and when?
 - `bfc6058` is committed locally but **not pushed** — the human wanted to review it first. Confirm it landed before building on top of it.

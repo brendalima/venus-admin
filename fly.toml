@@ -6,6 +6,11 @@ primary_region = "gru"
 
 [build]
 
+# Migrations run once per deploy, in a temporary machine, before the new
+# version starts. The API never migrates on its own startup.
+[deploy]
+  release_command = "/migrate"
+
 [env]
   APP_ENV = "prod"
   PORT = "8080"

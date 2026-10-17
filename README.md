@@ -15,55 +15,53 @@ admin saves → clicks "Publicar"
 
 ## Architecture
 
-Hexagonal (ports and adapters). Dependencies point inward: adapters know the core, never the reverse.
+Hexagonal (ports and adapters), following [AGENTS.md](AGENTS.md). Dependencies point inward: handlers know the services through interfaces, services know the persistence and external adapters through interfaces, and the domain knows nothing.
 
 ```
-cmd/server/              composition root — the only place that wires
-                         adapters into the core
-
+cmd/
+  api/                   HTTP server: main.go (wiring + routes), server.go
+  migrate/               applies schema migrations, then exits
+adapters/                config from the environment, database connection,
+                         embedded goose migrations (adapters/migrations/)
 internal/
-  catalog/               THE CORE. Domain model, rules and the ports it
-                         needs. Imports nothing from this project and no
-                         driver or framework.
-    product.go             entities, Slugify, View
-    errors.go              domain errors and validation
-    ports.go               Repository, ImageStore, ImageProcessor,
-                           SitePublisher — interfaces the core owns
-
-  adapter/
-    web/                 driving adapter: HTTP, routing, middleware
-
-  platform/
-    config/              configuration from the environment
-    database/            pgx pool and goose migrations
+  core/
+    domain/              entities (Product, Image, View), Slugify,
+                         validation, domain errors — stdlib only
+    services/            business rules + contracts.go (what handlers use)
+  repository/            SQL over database/sql + contracts.go
+  storage/               external services (R2, image processing,
+                         Cloudflare deploy hook) — contracts only for now
+  rest/                  HTTP handlers and middleware
 ```
 
-Ports live in the core so the core owns the contract and adapters depend on it. That also happens to match Go's own habit of declaring interfaces where they are consumed.
+The layer rules are enforced by `internal/architecture_test.go`: a forbidden import, or an `os.Getenv` inside `internal/`, fails the suite.
 
-The rule is enforced by tests, not by discipline alone — see `internal/catalog/architecture_test.go`. Add a stray import to the core and the suite fails.
-
-Adapters still to come: `postgres` (Repository), `r2` (ImageStore), `vips` (ImageProcessor), `cloudflare` (SitePublisher).
+Contracts declared ahead of their implementation: `ProductRepository`, `ImageStore`, `ImageProcessor`, `SitePublisher`.
 
 ## Running
 
-Needs Go 1.27 (pinned in `.tool-versions`, via asdf).
+Needs Go 1.27 (pinned in `.tool-versions`, via asdf) and a database URL.
 
 ```bash
-cp .env.example .env
+cp .env-sample .env
+make migrate
 make run
 ```
 
-Starts on `http://localhost:8080`. With no database configured the server still boots and `/readyz` says so — handy for working on screens without Postgres.
+Starts on `http://localhost:8080`. The API refuses to start without `DATABASE_URL_UNPOOLED` or `DATABASE_URL`.
 
 In development `.env.local` (written by `neon init`) is loaded automatically. A variable already exported in the shell still wins.
 
+With Docker, `docker compose up` starts a local Postgres, runs the migration and then the API — it never touches Neon.
+
 | Command | What it does |
 |---|---|
-| `make run` | Development server |
+| `make run` | API in development mode |
+| `make migrate` | Apply pending migrations |
 | `make test` | Tests with the race detector |
 | `make check` | Everything CI runs: gofmt, vet, tests |
 | `make cover` | Coverage report as HTML |
-| `make build` | Binary into `bin/server` |
+| `make build` | Binaries into `bin/` (`api`, `migrate`) |
 
 ## Endpoints
 
@@ -71,25 +69,37 @@ In development `.env.local` (written by `neon init`) is loaded automatically. A 
 |---|---|
 | `GET /healthz` | Liveness — does **not** touch the database |
 | `GET /readyz` | Readiness — does touch the database |
+| `GET /` | Redirects to `/admin` |
 | `GET /admin` | Admin panel (placeholder) |
 
-Splitting the two is deliberate. Fly uses `/healthz` to decide whether the machine is healthy, and Neon's free tier suspends when idle: if liveness depended on the database, the machine would be marked unhealthy every time Postgres took a nap.
+Splitting the two checks is deliberate. Fly uses `/healthz` to decide whether the machine is healthy, and Neon's free tier suspends when idle: if liveness depended on the database, the machine would be marked unhealthy every time Postgres took a nap.
+
+```bash
+curl -i localhost:8080/healthz
+# 200 {"status":"ok"}
+
+curl -i localhost:8080/readyz
+# 200 {"status":"ok","database":"ok"}
+# 503 {"error":"database unreachable"}
+```
+
+Errors always come back as `{"error": "<message>"}`.
 
 ## Database
 
 Postgres 18 on **Neon**, project `venus`, region `aws-sa-east-1` (São Paulo) — the same region as the app on Fly.
 
-Migrations live in `internal/platform/database/migrations/`, embedded in the binary with `go:embed`, and run at startup. With a single machine that is safe and avoids a separate deploy step; with more than one instance it becomes a `release_command` in `fly.toml` so two machines do not migrate at once.
+Migrations live in `adapters/migrations/`, embedded in the binary with `go:embed`, and are applied by the separate `cmd/migrate` binary — never by the API on startup. On Fly it runs as the `release_command`, once per deploy, before the new version starts.
 
 ### Why the direct connection, not the pooled one
 
-Neon exposes both: `DATABASE_URL` goes through PgBouncer and `DATABASE_URL_UNPOOLED` goes direct. The app uses the **direct** one, because pgx already keeps its own pool — stacking it on transaction pooling breaks the prepared statement cache, and with one process and low concurrency there is nothing to gain in exchange.
+Neon exposes both: `DATABASE_URL` goes through PgBouncer and `DATABASE_URL_UNPOOLED` goes direct. The app uses the **direct** one: `database/sql` already keeps its own pool, and pgx's prepared statement cache breaks under PgBouncer's transaction pooling. With one process and low concurrency there is nothing to gain in exchange.
 
-The pool sets `MinConns = 0` on purpose: Neon's compute suspends when idle, and holding a connection open would keep it awake, burning free-tier hours while the admin sits unused.
+Idle connections close after two minutes on purpose: Neon's compute suspends when idle, and holding a connection open would keep it awake, burning free-tier hours while the admin sits unused.
 
 ```bash
 make test                            # integration tests skip without a database
-go test ./internal/platform/database/ -v   # with .env.local present, they really run
+go test ./adapters/ -v                # with .env.local present, they really run
 ```
 
 ## Configuration
@@ -100,8 +110,10 @@ Everything through environment variables — what Fly expects (`fly secrets`), a
 |---|---|---|
 | `APP_ENV` | `dev` | no (`dev` or `prod`) |
 | `PORT` | `8080` | no |
-| `DATABASE_URL_UNPOOLED` | — | yes (preferred) |
-| `DATABASE_URL` | — | used if the above is absent |
+| `DATABASE_URL_UNPOOLED` | — | one of the two (preferred) |
+| `DATABASE_URL` | — | one of the two |
+
+New variables go into `.env-sample`.
 
 ## Deploy
 
@@ -110,11 +122,11 @@ Fly.io, region `gru` (São Paulo), a 256 MB machine that **stops when unused** a
 ```bash
 fly launch --no-deploy   # first time
 fly secrets set DATABASE_URL_UNPOOLED="..."
-fly deploy
+fly deploy               # runs /migrate, then starts /api
 ```
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, Docker, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and ports defined.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined.
 
 Next: the Postgres adapter, authentication and the CRUD screens.

@@ -1,6 +1,9 @@
-package catalog
+package domain
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestSlugify(t *testing.T) {
 	// The admin generates the slug from the name so nobody using it has
@@ -89,8 +92,8 @@ func TestValidate(t *testing.T) {
 				t.Fatal("expected a validation error")
 			}
 
-			var ve ValidationError
-			if !asValidationError(err, &ve) {
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
 				t.Fatalf("error is not a ValidationError: %v", err)
 			}
 			if ve.Field != tt.field {
@@ -103,12 +106,4 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
-}
-
-func asValidationError(err error, target *ValidationError) bool {
-	ve, ok := err.(ValidationError)
-	if ok {
-		*target = ve
-	}
-	return ok
 }

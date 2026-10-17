@@ -1,5 +1,4 @@
 .DEFAULT_GOAL := help
-BIN := bin/server
 
 .PHONY: help
 help: ## List available commands
@@ -7,12 +6,16 @@ help: ## List available commands
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: run
-run: ## Run the server in development mode
-	go run ./cmd/server
+run: ## Run the API in development mode
+	go run ./cmd/api
+
+.PHONY: migrate
+migrate: ## Apply pending database migrations
+	go run ./cmd/migrate
 
 .PHONY: build
-build: ## Build the binary into bin/
-	go build -trimpath -o $(BIN) ./cmd/server
+build: ## Build every binary into bin/
+	go build -trimpath -o bin/ ./cmd/...
 
 .PHONY: test
 test: ## Run tests with the race detector

@@ -1,0 +1,37 @@
+# Local stack: a throwaway Postgres, the migration and the API.
+# DATABASE_URL_UNPOOLED is overridden so compose never touches Neon.
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL_UNPOOLED: postgres://venus:venus@db:5432/venus?sslmode=disable
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: venus
+      POSTGRES_PASSWORD: venus
+      POSTGRES_DB: venus
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "venus"]
+      interval: 2s
+      retries: 15
+
+  migrate:
+    <<: *app
+    command: ["/migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["/api"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

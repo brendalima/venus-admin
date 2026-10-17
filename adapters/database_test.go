@@ -1,21 +1,24 @@
-package database
+package adapters
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/joho/godotenv"
 )
 
 // Integration tests: they talk to a real Postgres.
 // They skip when no database is configured, so CI stays green without
 // holding the secret.
-func testPool(t *testing.T) *pgxpool.Pool {
+func testDB(t *testing.T) *sql.DB {
 	t.Helper()
-	_ = godotenv.Load("../../../.env.local", "../../../.env")
+	// Missing files are fine: the test skips below without a URL.
+	_ = godotenv.Load("../.env.local")
+	_ = godotenv.Load("../.env")
 
 	dsn := os.Getenv("DATABASE_URL_UNPOOLED")
 	if dsn == "" {
@@ -28,25 +31,25 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pool, err := NewPool(ctx, dsn)
+	db, err := NewDatabase(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { db.Close() })
 
-	if err := Migrate(context.Background(), pool); err != nil {
+	if err := Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
-	return pool
+	return db
 }
 
 func TestSchemaIsApplied(t *testing.T) {
-	pool := testPool(t)
+	db := testDB(t)
 	ctx := context.Background()
 
 	for _, table := range []string{"products", "product_images", "site_state"} {
 		var exists bool
-		err := pool.QueryRow(ctx,
+		err := db.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
 			 WHERE table_schema = 'public' AND table_name = $1)`, table,
 		).Scan(&exists)
@@ -60,19 +63,20 @@ func TestSchemaIsApplied(t *testing.T) {
 }
 
 func TestProductRoundTripAndUpdatedAtTrigger(t *testing.T) {
-	pool := testPool(t)
+	db := testDB(t)
 	ctx := context.Background()
 
 	const slug = "integration-test-do-not-use"
 	cleanup := func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE slug = $1`, slug)
+		// Best effort: a leftover row only affects this test's next run.
+		_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE slug = $1`, slug)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
 
 	var id int64
 	var updatedAt time.Time
-	err := pool.QueryRow(ctx,
+	err := db.QueryRowContext(ctx,
 		`INSERT INTO products (slug, name, price_cents, sizes, description, details, position)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, updated_at`,
@@ -87,9 +91,10 @@ func TestProductRoundTripAndUpdatedAtTrigger(t *testing.T) {
 	var name string
 	var cents int64
 	var sizes, details []string
-	err = pool.QueryRow(ctx,
+	types := pgtype.NewMap()
+	err = db.QueryRowContext(ctx,
 		`SELECT name, price_cents, sizes, details FROM products WHERE id = $1`, id,
-	).Scan(&name, &cents, &sizes, &details)
+	).Scan(&name, &cents, types.SQLScanner(&sizes), types.SQLScanner(&details))
 	if err != nil {
 		t.Fatalf("reading back: %v", err)
 	}
@@ -111,13 +116,13 @@ func TestProductRoundTripAndUpdatedAtTrigger(t *testing.T) {
 	// time — which is why updated_at moves here and would not inside a
 	// single transaction.
 	time.Sleep(50 * time.Millisecond)
-	if _, err := pool.Exec(ctx,
+	if _, err := db.ExecContext(ctx,
 		`UPDATE products SET price_cents = 19900 WHERE id = $1`, id); err != nil {
 		t.Fatalf("updating: %v", err)
 	}
 
 	var newUpdatedAt time.Time
-	if err := pool.QueryRow(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT updated_at FROM products WHERE id = $1`, id).Scan(&newUpdatedAt); err != nil {
 		t.Fatalf("re-reading: %v", err)
 	}
@@ -127,11 +132,11 @@ func TestProductRoundTripAndUpdatedAtTrigger(t *testing.T) {
 }
 
 func TestSiteStateIsSingleRow(t *testing.T) {
-	pool := testPool(t)
+	db := testDB(t)
 	ctx := context.Background()
 
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM site_state`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM site_state`).Scan(&count); err != nil {
 		t.Fatalf("counting: %v", err)
 	}
 	if count != 1 {
@@ -139,8 +144,9 @@ func TestSiteStateIsSingleRow(t *testing.T) {
 	}
 
 	// The boolean primary key with a CHECK must reject a second row.
-	if _, err := pool.Exec(ctx, `INSERT INTO site_state (id) VALUES (FALSE)`); err == nil {
-		_, _ = pool.Exec(ctx, `DELETE FROM site_state WHERE id = FALSE`)
+	if _, err := db.ExecContext(ctx, `INSERT INTO site_state (id) VALUES (FALSE)`); err == nil {
+		// Best effort undo; the test already fails either way.
+		_, _ = db.ExecContext(ctx, `DELETE FROM site_state WHERE id = FALSE`)
 		t.Error("a second site_state row was accepted; it should be rejected")
 	}
 }

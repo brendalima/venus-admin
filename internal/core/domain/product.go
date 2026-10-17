@@ -1,10 +1,6 @@
-// Package catalog is the core of the hexagon: it holds the domain model
-// and the rules around it.
-//
-// It must not import any adapter, driver or framework. Everything it
-// needs from the outside world is declared as an interface in ports.go
-// and supplied by the composition root.
-package catalog
+// Package domain holds the entities and the rules that belong to them.
+// It imports nothing but the standard library.
+package domain
 
 import (
 	"regexp"
@@ -35,51 +31,6 @@ type Product struct {
 	UpdatedAt time.Time
 }
 
-// View is the angle a photo was taken from. The set is closed on purpose:
-// free text turns into "back", "Back ", "rear" across three people.
-type View string
-
-const (
-	ViewFront    View = "Frente"
-	ViewBack     View = "Costas"
-	ViewSide     View = "Perfil"
-	ViewFullBody View = "Corpo inteiro"
-	ViewCloseUp  View = "Detalhe"
-)
-
-// Views lists every accepted angle, in the order the admin shows them.
-// The values are the labels the shop owners read, so they stay in
-// Portuguese while the code around them is in English.
-func Views() []View {
-	return []View{ViewFront, ViewBack, ViewSide, ViewFullBody, ViewCloseUp}
-}
-
-func (v View) Valid() bool {
-	for _, known := range Views() {
-		if v == known {
-			return true
-		}
-	}
-	return false
-}
-
-// Image is one photo of a product, stored in two widths.
-//
-// The widths come from the real layout: a card renders at roughly 300 CSS
-// pixels (600 on 2x screens) and the product page at roughly 440 (1200
-// covers large displays).
-type Image struct {
-	ID        int64
-	ProductID int64
-	View      View
-	URL600    string
-	URL1200   string
-	Key600    string
-	Key1200   string
-	Position  int32
-	CreatedAt time.Time
-}
-
 // Cover is the photo shown on the catalogue card: the first one.
 func (p Product) Cover() (Image, bool) {
 	if len(p.Images) == 0 {
@@ -108,4 +59,28 @@ func Slugify(name string) string {
 	s := accents.Replace(strings.ToLower(strings.TrimSpace(name)))
 	s = nonSlugChars.ReplaceAllString(s, "-")
 	return strings.Trim(s, "-")
+}
+
+// Validate checks the rules the database constraints cannot express well
+// enough to produce a decent message.
+func (p Product) Validate() error {
+	switch {
+	case len(p.Name) == 0:
+		return NewValidationError("name", "Falta o nome da peça")
+	case p.PriceCents < 0:
+		return NewValidationError("price", "O preço não pode ser negativo")
+	case p.PriceCents == 0:
+		return NewValidationError("price", "Falta o preço")
+	case len(p.Sizes) == 0:
+		return NewValidationError("sizes", "Escolha ao menos um tamanho")
+	case p.Slug == "":
+		return NewValidationError("slug", "Não consegui gerar o endereço a partir do nome")
+	}
+
+	for _, img := range p.Images {
+		if !img.View.Valid() {
+			return NewValidationError("images", "Ângulo de foto desconhecido: "+string(img.View))
+		}
+	}
+	return nil
 }
