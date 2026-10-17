@@ -51,9 +51,11 @@ func run() error {
 	hRepository := repository.MustNewHealth(db)
 	uRepository := repository.MustNewUser(db)
 	sRepository := repository.MustNewSession(db)
+	pRepository := repository.MustNewProduct(db)
 
 	hService := services.MustNewHealth(hRepository)
 	uService := services.MustNewUser(uRepository, sRepository)
+	pService := services.MustNewProduct(pRepository)
 
 	templates := rest.MustNewTemplates()
 	sessions := rest.MustNewSessionManager(sRepository, cfg.IsProd())
@@ -67,20 +69,34 @@ func run() error {
 		Templates:      templates,
 		ClientIPHeader: cfg.ClientIPHeader,
 	})
-	rAdmin := rest.MustNewAdmin(templates)
+	rProduct := rest.MustNewProduct(rest.ProductInput{
+		Service:   pService,
+		Sessions:  sessions,
+		Templates: templates,
+	})
+	private := func(h http.HandlerFunc) http.Handler { return rAuth.RequireLogin(h) }
 
 	// Everything a person sees goes through the session; the health
-	// checks stay outside it, so they never touch the database.
+	// checks and static files stay outside it, so they never touch the
+	// database.
 	app := http.NewServeMux()
-	app.HandleFunc("GET /{$}", rAdmin.Home)
+	app.Handle("GET /{$}", http.RedirectHandler("/admin", http.StatusFound))
 	app.HandleFunc("GET /login", rAuth.LoginPage)
 	app.HandleFunc("POST /login", rAuth.Login)
 	app.HandleFunc("POST /logout", rAuth.Logout)
-	app.Handle("GET /admin", rAuth.RequireLogin(http.HandlerFunc(rAdmin.Index)))
+	app.Handle("GET /admin", private(rProduct.List))
+	app.Handle("GET /admin/products/new", private(rProduct.New))
+	app.Handle("POST /admin/products", private(rProduct.Create))
+	app.Handle("GET /admin/products/{id}", private(rProduct.Edit))
+	app.Handle("POST /admin/products/{id}", private(rProduct.Update))
+	app.Handle("POST /admin/products/{id}/sold-out", private(rProduct.SetSoldOut))
+	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
+	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", rHealth.Live)
 	mux.HandleFunc("GET /readyz", rHealth.Ready)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", rest.MustNewStatic()))
 	mux.Handle("/", sessions.LoadAndSave(app))
 
 	handler := rest.Chain(mux,

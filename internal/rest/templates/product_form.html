@@ -1,0 +1,78 @@
+{{define "title"}}{{if .ID}}Editar peça{{else}}Nova peça{{end}}{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+{{template "flash" .}}
+<div class="card">
+  <h1>{{if .ID}}Editar peça{{else}}Nova peça{{end}}</h1>
+  {{with .Alert}}<p class="alert" role="alert">{{.}}</p>{{end}}
+
+  <form method="post" action="{{if .ID}}/admin/products/{{.ID}}{{else}}/admin/products{{end}}" novalidate>
+    {{$e := .Errors}}
+
+    <label for="name">Nome da peça</label>
+    <input id="name" name="name" type="text" value="{{.Form.Name}}" required
+           placeholder="Biquíni Aurora" autocomplete="off"
+           {{with index $e "name"}}aria-invalid="true" aria-describedby="name-error"{{end}}
+           {{if not .ID}}autofocus{{end}}>
+    {{with index $e "name"}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+
+    <label for="price">Preço</label>
+    <div class="price">
+      <span aria-hidden="true">R$</span>
+      <input id="price" name="price" type="text" inputmode="decimal" value="{{.Form.Price}}"
+             placeholder="189,90" required autocomplete="off"
+             aria-describedby="{{with index $e "price"}}price-error {{end}}price-hint"
+             {{with index $e "price"}}aria-invalid="true"{{end}}>
+    </div>
+    <p class="hint" id="price-hint">Em reais. Ex.: 189,90</p>
+    {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
+
+    <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>
+      <legend>Tamanhos disponíveis</legend>
+      <div class="choices">
+        {{range .Sizes}}
+        <label class="choice"><input type="checkbox" name="sizes" value="{{.}}" {{if $.Form.HasSize .}}checked{{end}}> {{.}}</label>
+        {{end}}
+      </div>
+    </fieldset>
+    {{with index $e "sizes"}}<p class="field-error" id="sizes-error">{{.}}</p>{{end}}
+
+    <label for="description">Descrição curta</label>
+    <textarea id="description" name="description" rows="2" aria-describedby="description-hint">{{.Form.Description}}</textarea>
+    <p class="hint" id="description-hint">Aparece no card da peça. Uma frase basta.</p>
+
+    <label for="details">Detalhes</label>
+    <textarea id="details" name="details" rows="5" aria-describedby="details-hint">{{.Form.Details}}</textarea>
+    <p class="hint" id="details-hint">Um detalhe por linha. Aparecem como lista na página da peça.</p>
+
+    <label class="check" for="sold_out">
+      <input id="sold_out" name="sold_out" type="checkbox" {{if .Form.SoldOut}}checked{{end}}>
+      <span>Esgotada <span class="hint">— continua no site, com o aviso “Esgotado”</span></span>
+    </label>
+
+    {{if .ID}}
+    <details {{if index $e "slug"}}open{{end}}>
+      <summary>Opções avançadas</summary>
+      <label for="slug">Endereço da peça no site</label>
+      <input id="slug" name="slug" type="text" value="{{.Form.Slug}}" autocomplete="off"
+             autocapitalize="none" spellcheck="false"
+             aria-describedby="{{with index $e "slug"}}slug-error {{end}}slug-hint"
+             {{with index $e "slug"}}aria-invalid="true"{{end}}>
+      <p class="hint" id="slug-hint">É o final do link da peça. Mudar quebra os links que já foram compartilhados. Deixe vazio para gerar a partir do nome.</p>
+      {{with index $e "slug"}}<p class="field-error" id="slug-error">{{.}}</p>{{end}}
+    </details>
+    {{end}}
+
+    <div class="actions">
+      <button type="submit">{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}</button>
+      <a href="/admin">Cancelar</a>
+    </div>
+  </form>
+</div>
+
+{{if .ID}}
+<p class="actions"><a href="/admin/products/{{.ID}}/delete">Apagar esta peça</a></p>
+{{end}}
+{{end}}

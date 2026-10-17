@@ -63,9 +63,10 @@ func newMockUserService() *mockUserService {
 // testApp wires the routes the way cmd/api does, so the tests exercise
 // the session cookie and middleware for real.
 type testApp struct {
-	server  *httptest.Server
-	client  *http.Client
-	service *mockUserService
+	server   *httptest.Server
+	client   *http.Client
+	service  *mockUserService
+	products *mockProductService
 }
 
 func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
@@ -84,20 +85,33 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		Limiter:   limiter,
 		Templates: templates,
 	})
-	admin := MustNewAdmin(templates)
+	products := newMockProductService()
+	product := MustNewProduct(ProductInput{Service: products, Sessions: sessions, Templates: templates})
+	private := func(h http.HandlerFunc) http.Handler { return auth.RequireLogin(h) }
 
 	app := http.NewServeMux()
 	app.HandleFunc("GET /login", auth.LoginPage)
 	app.HandleFunc("POST /login", auth.Login)
 	app.HandleFunc("POST /logout", auth.Logout)
-	app.Handle("GET /admin", auth.RequireLogin(http.HandlerFunc(admin.Index)))
+	app.Handle("GET /admin", private(product.List))
+	app.Handle("GET /admin/products/new", private(product.New))
+	app.Handle("POST /admin/products", private(product.Create))
+	app.Handle("GET /admin/products/{id}", private(product.Edit))
+	app.Handle("POST /admin/products/{id}", private(product.Update))
+	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
+	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
+	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
 	// Stands in for anything that stores data before login, giving the
 	// visitor a real session token to carry into it.
 	app.HandleFunc("GET /visit", func(_ http.ResponseWriter, r *http.Request) {
 		sessions.Put(r.Context(), "visited", true)
 	})
 
-	server := httptest.NewServer(RejectCrossOrigin(sessions.LoadAndSave(app)))
+	mux := http.NewServeMux()
+	mux.Handle("GET /static/", http.StripPrefix("/static/", MustNewStatic()))
+	mux.Handle("/", sessions.LoadAndSave(app))
+
+	server := httptest.NewServer(RejectCrossOrigin(mux))
 	t.Cleanup(server.Close)
 
 	jar, err := cookiejar.New(nil)
@@ -109,7 +123,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		// Redirects are what is being tested; do not follow them.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &testApp{server: server, client: client, service: service}
+	return &testApp{server: server, client: client, service: service, products: products}
 }
 
 func (a *testApp) get(t *testing.T, path string, header http.Header) (*http.Response, string) {

@@ -189,7 +189,7 @@ func (a *Auth) RequireLogin(next http.Handler) http.Handler {
 // plain redirect inside the fragment it requested, which would draw the
 // login form in the middle of a page, so it gets HX-Redirect instead.
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("HX-Request") == "true" {
+	if isHTMX(r) {
 		w.Header().Set("HX-Redirect", "/login")
 		w.WriteHeader(http.StatusUnauthorized)
 		return

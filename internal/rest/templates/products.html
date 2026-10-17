@@ -1,0 +1,42 @@
+{{define "title"}}Peças{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+{{template "flash" .}}
+<div class="title-row">
+  <h1>Peças</h1>
+  <a class="button" href="/admin/products/new">Nova peça</a>
+</div>
+
+{{if .Products}}
+<ul class="products">
+  {{range .Products}}{{template "product-row" .}}{{end}}
+</ul>
+{{else}}
+<div class="card">
+  <p>Nenhuma peça cadastrada ainda.</p>
+  <p class="muted">Comece pelo botão “Nova peça”.</p>
+</div>
+{{end}}
+{{end}}
+
+{{define "product-row"}}
+<li class="product" id="product-{{.ID}}">
+  <a href="/admin/products/{{.ID}}">
+    <strong>{{.Name}}</strong>
+    <span class="meta">R$ {{reais .PriceCents}} · {{join .Sizes " "}}</span>
+    {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
+  </a>
+  <form class="inline" method="post" action="/admin/products/{{.ID}}/sold-out"
+        hx-post="/admin/products/{{.ID}}/sold-out" hx-target="closest li" hx-swap="outerHTML">
+    {{if .SoldOut}}
+    <input type="hidden" name="sold_out" value="false">
+    <button type="submit" class="secondary">Voltou ao estoque</button>
+    {{else}}
+    <input type="hidden" name="sold_out" value="true">
+    <button type="submit" class="secondary">Marcar como esgotada</button>
+    {{end}}
+  </form>
+</li>
+{{end}}
