@@ -35,7 +35,8 @@ internal/
   storage/               external services (R2, image processing,
                          Cloudflare deploy hook) — contracts only for now
   rest/                  HTTP handlers, middleware, sessions, and the
-                         screens (html/template, embedded with go:embed)
+                         screens (html/template, embedded with go:embed);
+                         rest/static/ holds the vendored HTMX
 ```
 
 The layer rules are enforced by `internal/architecture_test.go`: a forbidden import, or an `os.Getenv` inside `internal/`, fails the suite.
@@ -78,7 +79,7 @@ With Docker, `docker compose up` starts a local Postgres, runs the migration and
 | `GET /login` | Login page |
 | `POST /login` | Logs in (form: `email`, `password`) |
 | `POST /logout` | Logs out |
-| `GET /admin` | Admin panel (placeholder) — requires login |
+| `GET /static/{file}` | Embedded static files (HTMX), cached for good: each name carries its version |
 
 Splitting the two checks is deliberate. Fly uses `/healthz` to decide whether the machine is healthy, and Neon's free tier suspends when idle: if liveness depended on the database, the machine would be marked unhealthy every time Postgres took a nap.
 
@@ -92,6 +93,30 @@ curl -i localhost:8080/readyz
 ```
 
 Errors from the JSON endpoints always come back as `{"error": "<message>"}`. The admin screens are HTML, with their messages in Portuguese.
+
+### The admin screens
+
+Server-rendered `html/template`, no build step. Every form is a plain HTML form that posts and redirects, so the admin works with JavaScript off; HTMX only spares the list a reload when toggling "sold out".
+
+Every route here requires login; without it, the browser is sent to `/login`.
+
+| Route | Purpose |
+|---|---|
+| `GET /admin` | List of products, with a quick "sold out" toggle |
+| `GET /admin/products/new` | Form for a new product |
+| `POST /admin/products` | Creates a product |
+| `GET /admin/products/{id}` | Edit form |
+| `POST /admin/products/{id}` | Saves the edits |
+| `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
+| `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product |
+| `POST /admin/products/{id}/delete` | Deletes it |
+
+Product form fields: `name`, `price` (reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), and on edit `slug`.
+
+- **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
+- **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`.
+- **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
+- **Deleting** goes through a confirmation page that names the product and suggests marking it sold out instead.
 
 ## Access
 
@@ -176,6 +201,6 @@ fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete — without photos yet.
 
-Next: the CRUD screens, then password reset by email.
+Next: password reset by email.
