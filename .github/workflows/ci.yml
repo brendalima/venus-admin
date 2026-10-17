@@ -31,7 +31,7 @@ jobs:
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1
         with:
-          version: latest
+          version: "2026.2.2"  # v0.8.2; keep in step with the Makefile
           install-go: false
 
       - name: Tests
@@ -39,7 +39,7 @@ jobs:
 
       - name: Known vulnerabilities
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0  # keep in step with the Makefile
           govulncheck ./...
 
       - name: Build

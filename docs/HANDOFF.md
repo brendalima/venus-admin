@@ -123,7 +123,7 @@ Check before planning around any of these.
 | `psql` | Inspect the database through Go tests or the `neon` CLI. |
 | `libvips` | M2's image pipeline cannot be tested locally until installed. |
 | `sqlc`, `goose` CLI | Both usable as libraries; goose already is. Install the CLI if you want codegen. |
-| `staticcheck`, `govulncheck` | CI runs them; locally `make check` covers gofmt, vet and tests only. |
+| `staticcheck`, `govulncheck` | Not installed, and not needed: `make check` runs both via `go run` at the versions pinned in the Makefile, the same ones CI uses. |
 
 **You cannot `git push`.** The SSH key is passphrase-protected and no `ssh-agent` is running, so ssh offers the key and cannot decrypt it. Commit locally and let the human push, unless they start an agent with the key loaded.
 
@@ -136,7 +136,7 @@ Toolchain: Go 1.27.2 via asdf, pinned in `.tool-versions`. Node 22 via nvm at `~
 ## 7. How to verify your work
 
 ```bash
-make check                               # gofmt, vet, tests with -race
+make check                               # gofmt, vet, staticcheck, tests with -race, govulncheck
 go test ./internal/                       # the architecture guard specifically
 go test ./adapters/ -v                    # integration; skips without a database
 make migrate && make run                  # then curl /healthz and /readyz

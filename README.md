@@ -63,7 +63,7 @@ With Docker, `docker compose up` starts a local Postgres, runs the migration and
 | `make run` | API in development mode |
 | `make migrate` | Apply pending migrations |
 | `make test` | Tests with the race detector |
-| `make check` | Everything CI runs: gofmt, vet, tests |
+| `make check` | Everything CI runs: gofmt, vet, staticcheck, tests, govulncheck |
 | `make cover` | Coverage report as HTML |
 | `make adduser` | Give someone access to the admin |
 | `make build` | Binaries into `bin/` (`api`, `migrate`, `adduser`) |

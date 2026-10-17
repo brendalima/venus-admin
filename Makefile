@@ -1,5 +1,10 @@
 .DEFAULT_GOAL := help
 
+# Linters run through `go run` at pinned versions, so nothing needs
+# installing. Keep them in step with .github/workflows/ci.yml.
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
 .PHONY: help
 help: ## List available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -34,7 +39,9 @@ cover: ## Generate the coverage report
 .PHONY: check
 check: fmt-check ## Run everything CI runs
 	go vet ./...
+	go run $(STATICCHECK) ./...
 	go test -race ./...
+	go run $(GOVULNCHECK) ./...
 
 .PHONY: fmt-check
 fmt-check: ## Fail if any file is not gofmt-clean
