@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 // Migrations are embedded in the binary so the image and the schema
@@ -56,14 +58,17 @@ func NewDatabase(ctx context.Context, dsn string) (*sql.DB, error) {
 }
 
 // Migrate applies pending migrations.
+//
+// It holds a Postgres advisory lock while it runs, so two migrators
+// started at once take turns instead of both applying the same file.
+// Fly's release_command already runs one at a time; the integration tests
+// of different packages, run in parallel by go test, do not.
 func Migrate(ctx context.Context, db *sql.DB) error {
-	goose.SetBaseFS(migrationsFS)
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("couldn't set dialect: %w", err)
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		return err
 	}
-	goose.SetLogger(goose.NopLogger())
-
-	if err := goose.UpContext(ctx, db, "migrations"); err != nil {
+	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("couldn't apply migrations: %w", err)
 	}
 	return nil
@@ -71,5 +76,25 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 
 // SchemaVersion returns the applied schema version, for logging.
 func SchemaVersion(ctx context.Context, db *sql.DB) (int64, error) {
-	return goose.GetDBVersionContext(ctx, db)
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		return 0, err
+	}
+	return provider.GetDBVersion(ctx)
+}
+
+func newMigrationProvider(db *sql.DB) (*goose.Provider, error) {
+	migrations, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("couldn't open embedded migrations: %w", err)
+	}
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create migration lock: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, goose.WithSessionLocker(locker))
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create migration provider: %w", err)
+	}
+	return provider, nil
 }
