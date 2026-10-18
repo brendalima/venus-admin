@@ -10,7 +10,10 @@ import (
 	"github.com/alexedwards/scs/v2"
 )
 
-const sessionUserIDKey = "user_id"
+const (
+	sessionUserIDKey          = "user_id"
+	sessionPasswordVersionKey = "password_version"
+)
 
 // NewSessionManager configures the login session cookie.
 //

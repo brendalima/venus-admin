@@ -123,15 +123,12 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A new token on every login, so a session ID planted before it
-	// (session fixation) is worth nothing after.
-	if err := a.sessions.RenewToken(ctx); err != nil {
-		slog.ErrorContext(ctx, "couldn't renew session token", "error", err)
+	if err := startSession(ctx, a.sessions, user); err != nil {
+		slog.ErrorContext(ctx, "couldn't start session", "error", err)
 		page.Error = "Não consegui entrar agora. Tente de novo em instantes."
 		a.templates.render(w, r, http.StatusInternalServerError, "login.html", page)
 		return
 	}
-	a.sessions.Put(ctx, sessionUserIDKey, user.ID)
 	a.limiter.Reset(ip)
 
 	slog.InfoContext(ctx, "login", "user_id", user.ID)
@@ -177,12 +174,36 @@ func (a *Auth) RequireLogin(next http.Handler) http.Handler {
 			http.Error(w, "Erro interno", http.StatusInternalServerError)
 			return
 		}
+		// The password changed after this session logged in, here or on
+		// another device: whoever changed it wanted the old one to stop
+		// working everywhere. Sessions from before password versions
+		// existed read as 0, which is every user's version until a reset.
+		if a.sessions.GetInt(ctx, sessionPasswordVersionKey) != user.PasswordVersion {
+			slog.InfoContext(ctx, "session from an old password", "user_id", user.ID)
+			if err := a.sessions.Destroy(ctx); err != nil {
+				slog.ErrorContext(ctx, "couldn't destroy session", "error", err)
+			}
+			redirectToLogin(w, r)
+			return
+		}
 
 		// Logged-in pages must not be served from the browser's cache
 		// after logging out, nor by the back button.
-		w.Header().Set("Cache-Control", "no-store")
+		noStore(w)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userContextKey{}, user)))
 	})
+}
+
+// startSession logs user in on this request's session. The token is
+// renewed on every login, so a session ID planted before it (session
+// fixation) is worth nothing after.
+func startSession(ctx context.Context, sessions *scs.SessionManager, user domain.User) error {
+	if err := sessions.RenewToken(ctx); err != nil {
+		return fmt.Errorf("couldn't renew session token: %w", err)
+	}
+	sessions.Put(ctx, sessionUserIDKey, user.ID)
+	sessions.Put(ctx, sessionPasswordVersionKey, user.PasswordVersion)
+	return nil
 }
 
 // redirectToLogin sends the browser to the login page. HTMX follows a

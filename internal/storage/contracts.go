@@ -1,8 +1,13 @@
-// Package storage holds the adapters for services outside the database,
-// and the image processing that prepares photos for them.
+// Package storage holds the adapters for services outside the database
+// (object storage, email), and the image processing that prepares photos
+// for them.
 package storage
 
-import "context"
+import (
+	"context"
+
+	"github.com/brendalima/venus-admin/internal/core/domain"
+)
 
 // ImageStore keeps the photo files (Cloudflare R2). Callers keep only the
 // key; the public URL is built from the bucket's base URL.
@@ -27,4 +32,9 @@ type ImageProcessor interface {
 // deploy hook).
 type SitePublisher interface {
 	Publish(ctx context.Context) error
+}
+
+// Mailer delivers email (Resend in production).
+type Mailer interface {
+	Send(ctx context.Context, e domain.Email) error
 }

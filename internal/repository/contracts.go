@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
@@ -52,6 +53,30 @@ type UserRepository interface {
 	Create(ctx context.Context, u domain.User) (domain.User, error)
 	GetByID(ctx context.Context, id string) (domain.User, error)
 	GetByEmail(ctx context.Context, email string) (domain.User, error)
+}
+
+// PasswordResetRepository keeps the links sent by "Esqueci minha senha".
+// Tokens arrive already hashed: the token itself never reaches the
+// database.
+type PasswordResetRepository interface {
+	// Create stores a link for userID that expires after ttl, measured by
+	// the database's clock, the same one that later checks it.
+	Create(ctx context.Context, tokenHash []byte, userID string, ttl time.Duration) error
+
+	// CountRecent returns how many links userID was sent within window.
+	CountRecent(ctx context.Context, userID string, window time.Duration) (int, error)
+
+	// GetUserID returns whose link this is, and *domain.NotFoundError when
+	// it is unknown, used or expired. It does not use the link up.
+	GetUserID(ctx context.Context, tokenHash []byte) (string, error)
+
+	// Consume uses the link up and sets the password in one transaction:
+	// passwordHash replaces the old one, the password version goes up,
+	// and every other link of the same user goes too. It returns the
+	// updated user, or *domain.NotFoundError when the link is unknown,
+	// used or expired — including by a concurrent Consume that got there
+	// first.
+	Consume(ctx context.Context, tokenHash []byte, passwordHash string) (domain.User, error)
 }
 
 // SessionRepository is the housekeeping side of the session store. The

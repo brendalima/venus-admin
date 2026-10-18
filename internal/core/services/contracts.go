@@ -24,6 +24,26 @@ type UserService interface {
 	GetByID(ctx context.Context, id string) (domain.User, error)
 }
 
+// PasswordResetService is "Esqueci minha senha": a link by email that lets
+// someone set a new password without the developer.
+type PasswordResetService interface {
+	// Request emails a reset link when email belongs to an account, and
+	// otherwise does nothing; either way it returns nil, so the caller
+	// cannot tell whether the account exists. An error means the link
+	// could not be created or sent.
+	Request(ctx context.Context, email string) error
+
+	// Check returns *domain.NotFoundError when the link's token is
+	// unknown, already used or expired.
+	Check(ctx context.Context, token string) error
+
+	// Reset sets password for the token's user and uses the link up. It
+	// returns the user, with the new password version, so the caller can
+	// log them in; a bad password comes back as *domain.ValidationError,
+	// and a dead link as *domain.NotFoundError.
+	Reset(ctx context.Context, token, password string) (domain.User, error)
+}
+
 // ProductService manages the catalogue. A product's photos are saved
 // with it: Create and Update apply a photo edit together with the fields,
 // all or nothing.

@@ -53,7 +53,7 @@ make migrate
 make run
 ```
 
-Starts on `http://localhost:8080`. The API refuses to start without `DATABASE_URL_UNPOOLED` or `DATABASE_URL`, and in production also without the R2 settings and `IMAGE_BASE_URL`.
+Starts on `http://localhost:8080`. The API refuses to start without `DATABASE_URL_UNPOOLED` or `DATABASE_URL`, and in production also without the R2 settings, `IMAGE_BASE_URL`, `PUBLIC_URL`, `RESEND_API_KEY` and `MAIL_FROM`.
 
 In development `.env.local` (written by `neon init`) is loaded automatically. A variable already exported in the shell still wins.
 
@@ -79,6 +79,10 @@ With Docker, `docker compose up` starts a local Postgres, runs the migration and
 | `GET /login` | Login page |
 | `POST /login` | Logs in (form: `email`, `password`) |
 | `POST /logout` | Logs out |
+| `GET /forgot-password` | "Esqueci minha senha": asks for the email |
+| `POST /forgot-password` | Emails a reset link (form: `email`); answers the same whether or not the account exists |
+| `GET /reset-password?token=…` | The link from the email: new password form, or "this link no longer works" |
+| `POST /reset-password` | Sets the new password and logs in (form: `token`, `password`, `confirm`) |
 | `GET /static/{file}` | Embedded static files (HTMX), cached for good: each name carries its version |
 
 Splitting the two checks is deliberate. Fly uses `/healthz` to decide whether the machine is healthy, and Neon's free tier suspends when idle: if liveness depended on the database, the machine would be marked unhealthy every time Postgres took a nap.
@@ -194,6 +198,18 @@ fly ssh console -C "/adduser -email ana@exemplo.com"  # in production
 - CSRF: `http.CrossOriginProtection` rejects state-changing requests from other sites, together with the `SameSite=Lax` cookie. There are no tokens to put in forms.
 - Expired sessions are deleted on each successful login rather than on a timer, so nothing wakes Neon up on its own.
 
+### Forgotten passwords
+
+"Esqueci minha senha" on the login page emails a link through **Resend**, so the owners never need the developer to get back in.
+
+- The link carries a random 256-bit token; the database keeps only its SHA-256 (`password_resets`). It works **once, for 1 hour**.
+- The answer is the same whether or not the email has an account. The confirmation names the address, so a typo shows.
+- At most **3 links per account per hour** and **5 requests per IP every 15 minutes**, so nobody can flood an inbox or spend the free sending quota.
+- Setting a new password **logs out every other session**: `admin_users.password_version` goes up, and a session that logged in under an older version is turned away. The person who reset is logged straight in.
+- The token travels in the query string, which the access log leaves out (it logs the path only), and the reset pages are `Cache-Control: no-store`.
+- Links start with `PUBLIC_URL`, never with the request's `Host` header, which the client controls.
+- In development, without `RESEND_API_KEY`, the email is written to the log instead, link included.
+
 ## Database
 
 Postgres 18 on **Neon**, project `venus`, region `aws-sa-east-1` (São Paulo) — the same region as the app on Fly.
@@ -256,6 +272,9 @@ Everything through environment variables — what Fly expects (`fly secrets`), a
 | `MEDIA_DIR` | `.media` | development without R2 only |
 | `DEPLOY_HOOK_URL` | — | no; without it production does not offer publishing. A secret; `https` in production |
 | `API_TOKEN` | — | in production, at least 32 characters (`openssl rand -hex 16`); in development, empty turns `/api/products` off |
+| `PUBLIC_URL` | `http://localhost:$PORT` | in production, `https` (set in `fly.toml`) |
+| `RESEND_API_KEY` | — | in production (`fly secrets`); in development, empty logs emails instead |
+| `MAIL_FROM` | — | whenever `RESEND_API_KEY` is set; its domain must be verified in Resend |
 | `TEST_DATABASE_URL` | — | tests only; integration tests skip without it |
 
 New variables go into `.env-sample`.
@@ -271,6 +290,7 @@ fly secrets set DATABASE_URL_UNPOOLED="$(neon cs production --project-id dry-wat
 fly secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET=… IMAGE_BASE_URL=https://…
 fly secrets set API_TOKEN="$(openssl rand -hex 16)"   # the site's build needs the same value
 fly secrets set DEPLOY_HOOK_URL=https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/…   # once the site is on Pages
+fly secrets set RESEND_API_KEY=re_… MAIL_FROM="Vênus Oasis <…@…>"
 fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 ```
 
@@ -278,6 +298,6 @@ fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2. Publishing: the pending-changes badge, the publish button and `/api/products`, with the deploy hook waiting for the site's Pages project.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2. Publishing: the pending-changes badge, the publish button and `/api/products`, with the deploy hook waiting for the site's Pages project. Password reset by email through Resend.
 
-Next: password reset by email (branch `password-reset`), then the site's build reading `/api/products` (M4).
+Next: the site's build reading `/api/products` (M4).

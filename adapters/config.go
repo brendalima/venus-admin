@@ -55,6 +55,18 @@ type Config struct {
 	// Required in production; in development, leaving it empty keeps
 	// the API off.
 	APIToken string
+
+	// PublicURL is the admin's address as people reach it, without a
+	// trailing slash. Links in emails start with it; building them from
+	// the request's Host header instead would let a client point them
+	// anywhere.
+	PublicURL string
+
+	// ResendAPIKey sends email through Resend. Required in production;
+	// in development, leaving it empty logs emails instead of sending.
+	ResendAPIKey string
+	// MailFrom is the sender, on a domain verified in Resend.
+	MailFrom string
 }
 
 // minAPITokenLength keeps the token out of guessing range. 32 characters
@@ -99,6 +111,8 @@ func LoadConfig() (Config, error) {
 		MediaDir:      strings.TrimSpace(os.Getenv("MEDIA_DIR")),
 		DeployHookURL: strings.TrimSpace(os.Getenv("DEPLOY_HOOK_URL")),
 		APIToken:      strings.TrimSpace(os.Getenv("API_TOKEN")),
+		ResendAPIKey:  strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		MailFrom:      strings.TrimSpace(os.Getenv("MAIL_FROM")),
 	}
 
 	if v := strings.TrimSpace(os.Getenv("APP_ENV")); v != "" {
@@ -131,6 +145,21 @@ func LoadConfig() (Config, error) {
 
 	if err := validatePublishing(cfg); err != nil {
 		return Config{}, err
+	}
+
+	publicURL, err := loadPublicURL(cfg)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.PublicURL = publicURL
+
+	// Without email, nobody can reset a forgotten password, so production
+	// refuses to start rather than fail the first time someone needs it.
+	if cfg.IsProd() && cfg.ResendAPIKey == "" {
+		return Config{}, errors.New("missing RESEND_API_KEY")
+	}
+	if cfg.ResendAPIKey != "" && cfg.MailFrom == "" {
+		return Config{}, errors.New("missing MAIL_FROM, needed to send email")
 	}
 
 	return cfg, nil
@@ -193,6 +222,27 @@ func loadImageStorage(cfg *Config) error {
 		cfg.MediaDir = ".media"
 	}
 	return nil
+}
+
+// loadPublicURL reads PUBLIC_URL, which development may leave out.
+func loadPublicURL(cfg Config) (string, error) {
+	v := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_URL")), "/")
+	if v == "" {
+		if cfg.IsProd() {
+			return "", errors.New("missing PUBLIC_URL")
+		}
+		return "http://localhost:" + strconv.Itoa(cfg.Port), nil
+	}
+
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Path != "" || u.RawQuery != "" {
+		return "", fmt.Errorf("invalid PUBLIC_URL %q: use the scheme and host only, like https://admin.venusoasis.com.br", v)
+	}
+	// A reset link sent over plain HTTP could be read on the way.
+	if cfg.IsProd() && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid PUBLIC_URL %q: production needs https", v)
+	}
+	return v, nil
 }
 
 // loadDotEnv loads .env.local (written by `neon init`) and then .env, in

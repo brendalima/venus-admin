@@ -70,6 +70,7 @@ type testApp struct {
 	service  *mockUserService
 	products *mockProductService
 	site     *mockSiteService
+	resets   *mockPasswordResetService
 }
 
 func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
@@ -92,12 +93,21 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	site := &mockSiteService{status: domain.SiteStatus{CanPublish: true}}
 	product := MustNewProduct(ProductInput{Service: products, Site: site, Sessions: sessions, Templates: templates})
 	api := MustNewAPI(APIInput{Service: products, Token: testAPIToken, ImageBaseURL: testImageBaseURL})
+	resets := newMockPasswordResetService(service)
+	// The same limiter caps both forms here; cmd/api gives each its own.
+	reset := MustNewPasswordReset(PasswordResetInput{
+		Service: resets, Sessions: sessions, Limiter: limiter, Templates: templates,
+	})
 	private := func(h http.HandlerFunc) http.Handler { return auth.RequireLogin(h) }
 
 	app := http.NewServeMux()
 	app.HandleFunc("GET /login", auth.LoginPage)
 	app.HandleFunc("POST /login", auth.Login)
 	app.HandleFunc("POST /logout", auth.Logout)
+	app.HandleFunc("GET /forgot-password", reset.ForgotPage)
+	app.HandleFunc("POST /forgot-password", reset.Forgot)
+	app.HandleFunc("GET /reset-password", reset.ResetPage)
+	app.HandleFunc("POST /reset-password", reset.Reset)
 	app.Handle("GET /admin", private(product.List))
 	app.Handle("GET /admin/products/new", private(product.New))
 	app.Handle("POST /admin/products", private(product.Create))
@@ -130,7 +140,20 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		// Redirects are what is being tested; do not follow them.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &testApp{server: server, client: client, service: service, products: products, site: site}
+	return &testApp{server: server, client: client, service: service, products: products, site: site, resets: resets}
+}
+
+// withNewDevice returns the same app seen from another browser: same
+// server and services, its own cookies.
+func (a *testApp) withNewDevice(t *testing.T) *testApp {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *a
+	other.client = &http.Client{Jar: jar, CheckRedirect: a.client.CheckRedirect}
+	return &other
 }
 
 func (a *testApp) get(t *testing.T, path string, header http.Header) (*http.Response, string) {
