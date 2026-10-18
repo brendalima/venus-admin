@@ -75,7 +75,7 @@
 {{if .ID}}
 <section class="card section" id="fotos" aria-labelledby="fotos-title">
   <h2 id="fotos-title">Fotos</h2>
-  <p class="hint">A primeira é a capa, que aparece na lista do site. As fotos são salvas assim que você as envia, sem precisar do botão “Salvar alterações”.</p>
+  <p class="hint">A primeira é a capa, que aparece na lista do site. Tudo aqui é salvo na hora, a cada clique: a capa, a ordem e as fotos enviadas. Não precisa de outro botão.</p>
   {{with .PhotoFlash}}<p class="ok" role="status">{{.}}</p>{{end}}
   {{with .PhotoFlashError}}<p class="alert" role="alert">{{.}}</p>{{end}}
 
@@ -113,13 +113,14 @@
   {{end}}
 
   {{if lt (len .Photos) .MaxPhotos}}
-  <form method="post" action="/admin/products/{{.ID}}/photos" enctype="multipart/form-data">
-    <label for="photos">Adicionar fotos</label>
+  <form class="upload" method="post" action="/admin/products/{{.ID}}/photos" enctype="multipart/form-data">
+    <h3>Adicionar fotos</h3>
+    <label for="photos">Escolha as fotos no celular ou no computador</label>
     <input id="photos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple required
            aria-describedby="photos-hint">
     <p class="hint" id="photos-hint">Pode escolher várias de uma vez. Até {{.MaxPhotos}} por peça.</p>
     <div class="actions">
-      <button type="submit">Enviar fotos</button>
+      <button type="submit">Enviar as fotos escolhidas</button>
     </div>
   </form>
   {{else}}

@@ -151,6 +151,10 @@ func (h *Product) MovePhoto(w http.ResponseWriter, r *http.Request) {
 		h.flash(r, sessionPhotoFlashErrorKey, "Não consegui mudar a ordem agora. Tente de novo em instantes.")
 	case index == 0:
 		h.flash(r, sessionPhotoFlashKey, "Pronto, essa é a nova capa.")
+	default:
+		// Said every time: there is no "save" button for the order, and
+		// without a word the move looks like it still needs one.
+		h.flash(r, sessionPhotoFlashKey, "Ordem salva.")
 	}
 	seeOther(w, r, photosURL(id))
 }

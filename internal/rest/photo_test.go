@@ -252,6 +252,10 @@ func TestMovePhoto(t *testing.T) {
 		t.Error("no confirmation of the new cover")
 	}
 	app.post(t, path, url.Values{"to": {"1"}})
+	// Every move says it was saved: there is no button to save the order.
+	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "Ordem salva.") {
+		t.Error("no confirmation after moving a photo")
+	}
 	if !slices.Equal(app.products.moves, []int{0, 1}) {
 		t.Errorf("moves = %v, want [0 1]", app.products.moves)
 	}
