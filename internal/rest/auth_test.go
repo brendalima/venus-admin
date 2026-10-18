@@ -102,10 +102,6 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
-	app.Handle("POST /admin/products/{id}/photos", private(product.UploadPhotos))
-	app.Handle("POST /admin/products/{id}/photos/{photo}/move", private(product.MovePhoto))
-	app.Handle("GET /admin/products/{id}/photos/{photo}/delete", private(product.ConfirmDeletePhoto))
-	app.Handle("POST /admin/products/{id}/photos/{photo}/delete", private(product.DeletePhoto))
 	// Stands in for anything that stores data before login, giving the
 	// visitor a real session token to carry into it.
 	app.HandleFunc("GET /visit", func(_ http.ResponseWriter, r *http.Request) {

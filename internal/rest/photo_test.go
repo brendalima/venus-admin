@@ -2,11 +2,11 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
@@ -15,55 +15,8 @@ import (
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
 
-// notAPhoto is what the mock's AddPhoto refuses, as the processor would.
+// notAPhoto is what the mock service refuses, as the processor would.
 const notAPhoto = "not a photo"
-
-func (m *mockProductService) AddPhoto(_ context.Context, productID string, original []byte) (domain.Image, error) {
-	if m.photoErr != nil {
-		return domain.Image{}, m.photoErr
-	}
-	p, ok := m.products[productID]
-	if !ok {
-		return domain.Image{}, domain.NewNotFoundError("product not found")
-	}
-	if string(original) == notAPhoto {
-		return domain.Image{}, domain.NewValidationError("photos", "Esse arquivo não é uma foto em JPEG, PNG ou WebP.")
-	}
-	id := fmt.Sprintf("img-%d", len(p.Images)+1)
-	img := domain.Image{ID: id, ProductID: productID, Key600: "produtos/" + id + "-600.jpg", Key1200: "produtos/" + id + "-1200.jpg"}
-	p.Images = append(p.Images, img)
-	m.products[productID] = p
-	return img, nil
-}
-
-func (m *mockProductService) MovePhoto(_ context.Context, productID, imageID string, index int) error {
-	if m.photoErr != nil {
-		return m.photoErr
-	}
-	p := m.products[productID]
-	for _, img := range p.Images {
-		if img.ID == imageID {
-			m.moves = append(m.moves, index)
-			return nil
-		}
-	}
-	return domain.NewNotFoundError("image not found")
-}
-
-func (m *mockProductService) DeletePhoto(_ context.Context, productID, imageID string) error {
-	if m.photoErr != nil {
-		return m.photoErr
-	}
-	p := m.products[productID]
-	for i, img := range p.Images {
-		if img.ID == imageID {
-			p.Images = slices.Delete(p.Images, i, i+1)
-			m.products[productID] = p
-			return nil
-		}
-	}
-	return domain.NewNotFoundError("image not found")
-}
 
 func auroraWithPhotos(n int) domain.Product {
 	p := aurora()
@@ -74,22 +27,42 @@ func auroraWithPhotos(n int) domain.Product {
 	return p
 }
 
-// postFiles sends a multipart form with one "photos" part per file.
-func (a *testApp) postFiles(t *testing.T, path string, files map[string][]byte) (*http.Response, string) {
+type upload struct {
+	name string
+	data []byte
+}
+
+// postProduct sends the product form as photos.js does: multipart, with
+// the files in order, and HX-Request so the server names the next page
+// instead of redirecting. Pass order as nil to send the form as a browser
+// without JavaScript would.
+func (a *testApp) postProduct(t *testing.T, path string, fields url.Values, order *string, remove []string, files ...upload) (*http.Response, string) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
+	for k, vs := range fields {
+		for _, v := range vs {
+			if err := mw.WriteField(k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	slices.Sort(names)
-	for _, name := range names {
-		part, err := mw.CreateFormFile("photos", name)
+	if order != nil {
+		if err := mw.WriteField(photoOrderField, *order); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range remove {
+		if err := mw.WriteField(photoRemoveField, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range files {
+		part, err := mw.CreateFormFile(photoFilesField, f.name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := part.Write(files[name]); err != nil {
+		if _, err := part.Write(f.data); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -101,7 +74,20 @@ func (a *testApp) postFiles(t *testing.T, path string, files map[string][]byte) 
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if order != nil {
+		req.Header.Set("HX-Request", "true")
+	}
 	return a.do(t, req)
+}
+
+func ptr(s string) *string { return &s }
+
+func lastEdit(t *testing.T, app *testApp) *domain.PhotoEdit {
+	t.Helper()
+	if len(app.products.edits) == 0 {
+		t.Fatal("the service was not called")
+	}
+	return app.products.edits[len(app.products.edits)-1]
 }
 
 func TestEditPageShowsPhotos(t *testing.T) {
@@ -111,211 +97,199 @@ func TestEditPageShowsPhotos(t *testing.T) {
 
 	_, body := app.get(t, "/admin/products/"+auroraID, nil)
 	for _, want := range []string{
-		`src="` + testImageBaseURL + `/produtos/img-1-600.jpg"`,
-		`alt="Foto 1 de Biquíni Aurora"`,
+		`data-id="img-1" data-src="` + testImageBaseURL + `/produtos/img-1-600.jpg"`,
 		`>Capa<`,
-		`action="/admin/products/` + auroraID + `/photos/img-2/move"`,
 		`enctype="multipart/form-data"`,
+		`data-product-form`,
+		`<script src="/static/photos.js?v=`,
 		`accept="image/jpeg,image/png,image/webp"`,
+		`Nada muda nas fotos até você clicar em “Salvar alterações”`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("edit page lacks %s", want)
 		}
 	}
-	// The first photo cannot go further up, nor the last further down.
-	if strings.Count(body, "↑ Antes") != 2 || strings.Count(body, "↓ Depois") != 2 {
-		t.Errorf("found %d “antes” and %d “depois” buttons, want 2 of each",
-			strings.Count(body, "↑ Antes"), strings.Count(body, "↓ Depois"))
-	}
-
-	app.products.add(auroraWithPhotos(domain.MaxImages))
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); strings.Contains(body, `type="file"`) || !strings.Contains(body, "o máximo") {
-		t.Error("a full product still offers to add photos")
-	}
-}
-
-func TestListShowsCover(t *testing.T) {
-	app := newTestApp(t, nil)
-	app.login(t)
-	app.products.add(auroraWithPhotos(2))
-	bare := aurora()
-	bare.ID, bare.Name = "other", "Maiô Brisa"
-	app.products.add(bare)
-
-	_, body := app.get(t, "/admin", nil)
-	if !strings.Contains(body, `class="thumb" src="`+testImageBaseURL+`/produtos/img-1-600.jpg"`) {
-		t.Error("the list does not show the cover")
-	}
-	if strings.Count(body, "Sem fotos") != 1 {
-		t.Error("the product without photos is not marked")
-	}
-}
-
-func TestCreateGoesToPhotos(t *testing.T) {
-	app := newTestApp(t, nil)
-	app.login(t)
-
-	res, _ := app.post(t, "/admin/products", validForm())
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/products/new-1#fotos" {
-		t.Fatalf("create: status %d, location %q, want 303 to the photos", res.StatusCode, res.Header.Get("Location"))
-	}
-	_, body := app.get(t, "/admin/products/new-1", nil)
-	if i := strings.Index(body, `id="fotos"`); i < 0 || !strings.Contains(body[i:], "Agora adicione as fotos") {
-		t.Error("the photos section does not say what comes next")
-	}
-}
-
-func TestUploadPhotos(t *testing.T) {
-	app := newTestApp(t, nil)
-	app.login(t)
-	app.products.add(aurora())
-
-	res, _ := app.postFiles(t, "/admin/products/"+auroraID+"/photos", map[string][]byte{
-		"IMG_0001.JPG":  []byte("photo one"),
-		"IMG_0002.JPG":  []byte("photo two"),
-		"IMG_0003.HEIC": []byte(notAPhoto),
-		"IMG_0004.HEIC": []byte(notAPhoto),
-		"enorme.png":    bytes.Repeat([]byte("x"), maxPhotoBytes+1),
-	})
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/products/"+auroraID+"#fotos" {
-		t.Fatalf("upload: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
-	}
-	if n := len(app.products.products[auroraID].Images); n != 2 {
-		t.Errorf("%d photos added, want 2", n)
-	}
-
-	_, body := app.get(t, "/admin/products/"+auroraID, nil)
-	// The page lands on #fotos, so that is where the outcome must be.
-	section := body[strings.Index(body, `id="fotos"`):]
-	for _, want := range []string{
-		"2 fotos adicionadas.",
-		"IMG_0003.HEIC, IMG_0004.HEIC: Esse arquivo não é uma foto em JPEG, PNG ou WebP.",
-		"enorme.png: passa de 15 MB.",
-	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("the photos section does not say %q", want)
+	// Photos are no longer changed one click at a time.
+	for _, gone := range []string{"/move", "/photos/img-1/delete"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("edit page still links to %s", gone)
 		}
 	}
 }
 
-func TestUploadPhotosFailures(t *testing.T) {
+func TestSaveWithPhotos(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	app.products.add(auroraWithPhotos(3))
+
+	// img-3 becomes the cover, img-2 goes, two new photos are placed.
+	res, _ := app.postProduct(t, "/admin/products/"+auroraID, validForm(),
+		ptr("id:img-3,new:1,id:img-1,new:0"), []string{"img-2"},
+		upload{"IMG_0001.JPG", []byte("one")}, upload{"IMG_0002.JPG", []byte("two")})
+	if res.StatusCode != http.StatusOK || res.Header.Get("HX-Redirect") != "/admin" {
+		t.Fatalf("save: status %d, HX-Redirect %q, want 200 naming /admin", res.StatusCode, res.Header.Get("HX-Redirect"))
+	}
+
+	edit := lastEdit(t, app)
+	want := []domain.PhotoSlot{{ImageID: "img-3"}, {NewIndex: 1}, {ImageID: "img-1"}, {NewIndex: 0}}
+	if edit == nil || !slices.Equal(edit.Order, want) || !slices.Equal(edit.Removed, []string{"img-2"}) || edit.AppendNew {
+		t.Fatalf("edit = %+v, want order %v and img-2 removed", edit, want)
+	}
+	if len(edit.New) != 2 {
+		t.Fatalf("%d new photos, want 2", len(edit.New))
+	}
+	if data, err := edit.New[1].Bytes(); err != nil || string(data) != "two" {
+		t.Errorf("second new photo = %q, %v", data, err)
+	}
+
+	got := []string{}
+	for _, img := range app.products.products[auroraID].Images {
+		got = append(got, img.ID)
+	}
+	if !slices.Equal(got, []string{"img-3", "added-1", "img-1", "added-0"}) {
+		t.Errorf("photos %v", got)
+	}
+	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "foram salvas") {
+		t.Error("no confirmation after saving")
+	}
+}
+
+func TestSaveWithoutJavaScript(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	app.products.add(auroraWithPhotos(1))
+
+	res, _ := app.postProduct(t, "/admin/products/"+auroraID, validForm(), nil, nil, upload{"IMG_0001.JPG", []byte("one")})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
+		t.Fatalf("save: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if edit := lastEdit(t, app); edit == nil || !edit.AppendNew || len(edit.New) != 1 {
+		t.Errorf("edit = %+v, want the file appended after the existing photos", edit)
+	}
+
+	// No files and no photo list: the photos are left alone.
+	app.postProduct(t, "/admin/products/"+auroraID, validForm(), nil, nil)
+	if edit := lastEdit(t, app); edit != nil {
+		t.Errorf("edit = %+v, want nil", edit)
+	}
+}
+
+func TestCreateWithPhotos(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+
+	res, _ := app.postProduct(t, "/admin/products", validForm(), ptr("new:0"), nil, upload{"IMG_0001.JPG", []byte("one")})
+	if res.Header.Get("HX-Redirect") != "/admin" {
+		t.Fatalf("create: status %d, HX-Redirect %q", res.StatusCode, res.Header.Get("HX-Redirect"))
+	}
+	if n := len(app.products.created[0].Images); n != 1 {
+		t.Errorf("created with %d photos, want 1", n)
+	}
+}
+
+func TestSaveWithPhotosRefused(t *testing.T) {
+	big := upload{"enorme.png", bytes.Repeat([]byte("x"), maxPhotoBytes+1)}
 	tests := []struct {
-		name       string
-		productID  string
-		files      map[string][]byte
-		photoErr   error
-		wantStatus int
-		wantText   string
+		name        string
+		edit        func(url.Values)
+		order       string
+		files       []upload
+		photoErr    error
+		wantStatus  int
+		wantTexts   []string
+		wantService bool // whether the service got the request
 	}{
-		{name: "no file", productID: auroraID, wantStatus: http.StatusSeeOther, wantText: "Escolha pelo menos uma foto"},
 		{
-			name: "storage down", productID: auroraID, files: map[string][]byte{"IMG_0001.JPG": []byte("photo")},
-			photoErr: errors.New("r2 unreachable"), wantStatus: http.StatusSeeOther, wantText: "IMG_0001.JPG: não consegui salvar agora",
+			name:       "a file is not a photo",
+			order:      "id:img-1,new:0,new:1",
+			files:      []upload{{"IMG_0001.JPG", []byte("one")}, {"IMG_0002.HEIC", []byte(notAPhoto)}},
+			wantStatus: http.StatusBadRequest, wantService: true,
+			wantTexts: []string{"Nada foi salvo", "IMG_0002.HEIC: Esse arquivo não é uma foto em JPEG, PNG ou WebP."},
 		},
 		{
-			name: "product gone", productID: "gone", files: map[string][]byte{"IMG_0001.JPG": []byte("photo")},
-			wantStatus: http.StatusNotFound, wantText: "Peça não encontrada",
+			name:       "a field and a photo at once",
+			edit:       func(f url.Values) { f.Set("name", "") },
+			order:      "id:img-1,new:0",
+			files:      []upload{{"IMG_0002.HEIC", []byte(notAPhoto)}},
+			wantStatus: http.StatusBadRequest, wantService: true,
+			wantTexts: []string{`id="name-error"`, "IMG_0002.HEIC: Esse arquivo"},
+		},
+		{
+			name: "a file over the size limit", order: "id:img-1,new:0", files: []upload{big},
+			wantStatus: http.StatusBadRequest, wantTexts: []string{"enorme.png: passa de 15 MB."},
+		},
+		{
+			name: "an unreadable photo list", order: "id:img-1,primeira",
+			wantStatus: http.StatusBadRequest, wantTexts: []string{"Não consegui entender a lista de fotos"},
+		},
+		{
+			name: "photos changed elsewhere", order: "id:img-1,id:img-9",
+			wantStatus: http.StatusConflict, wantService: true, wantTexts: []string{"As fotos desta peça mudaram enquanto você editava"},
+		},
+		{
+			name: "storage down", order: "id:img-1,new:0", files: []upload{{"IMG_0001.JPG", []byte("one")}},
+			photoErr: errors.New("r2 unreachable"), wantStatus: http.StatusInternalServerError, wantService: true,
+			wantTexts: []string{"Não consegui salvar agora. Nada foi salvo"},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newTestApp(t, nil)
 			app.login(t)
-			app.products.add(aurora())
+			app.products.add(auroraWithPhotos(1))
 			app.products.photoErr = tt.photoErr
+			form := validForm()
+			form.Set("name", "Biquíni Aurora Renomeado")
+			if tt.edit != nil {
+				tt.edit(form)
+			}
 
-			res, body := app.postFiles(t, "/admin/products/"+tt.productID+"/photos", tt.files)
+			res, body := app.postProduct(t, "/admin/products/"+auroraID, form, ptr(tt.order), nil, tt.files...)
 			if res.StatusCode != tt.wantStatus {
 				t.Fatalf("status %d, want %d", res.StatusCode, tt.wantStatus)
 			}
-			if res.StatusCode == http.StatusSeeOther {
-				_, body = app.get(t, "/admin/products/"+auroraID, nil)
+			for _, want := range tt.wantTexts {
+				if !strings.Contains(body, want) {
+					t.Errorf("the answer does not say %q", want)
+				}
 			}
-			if !strings.Contains(body, tt.wantText) {
-				t.Errorf("the page does not say %q", tt.wantText)
+			// photos.js swaps these regions in from the answer.
+			for _, region := range []string{"data-form-messages", "data-fields", "data-photo-errors"} {
+				if !strings.Contains(body, region) {
+					t.Errorf("the answer lacks the %s region", region)
+				}
+			}
+			if got := len(app.products.edits) > 0; got != tt.wantService {
+				t.Errorf("service called: %v, want %v", got, tt.wantService)
+			}
+			if p := app.products.products[auroraID]; p.Name != "Biquíni Aurora" || len(p.Images) != 1 {
+				t.Errorf("something was saved: %q with %d photos", p.Name, len(p.Images))
 			}
 		})
 	}
 }
 
-func TestMovePhoto(t *testing.T) {
+func TestPhotosScriptIsServed(t *testing.T) {
 	app := newTestApp(t, nil)
-	app.login(t)
-	app.products.add(auroraWithPhotos(3))
-	path := "/admin/products/" + auroraID + "/photos/img-3/move"
-
-	res, _ := app.post(t, path, url.Values{"to": {"0"}})
-	if res.Header.Get("Location") != "/admin/products/"+auroraID+"#fotos" {
-		t.Errorf("location %q", res.Header.Get("Location"))
+	src := assetURL("photos.js")
+	if !strings.HasPrefix(src, "/static/photos.js?v=") {
+		t.Fatalf("asset URL %q", src)
 	}
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "essa é a nova capa") {
-		t.Error("no confirmation of the new cover")
+	res, body := app.get(t, src, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "data-product-form") {
+		t.Fatalf("GET %s: status %d", src, res.StatusCode)
 	}
-	app.post(t, path, url.Values{"to": {"1"}})
-	// Every move says it was saved: there is no button to save the order.
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "Ordem salva.") {
-		t.Error("no confirmation after moving a photo")
-	}
-	if !slices.Equal(app.products.moves, []int{0, 1}) {
-		t.Errorf("moves = %v, want [0 1]", app.products.moves)
-	}
-
-	app.post(t, path, url.Values{"to": {"primeiro"}})
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "Não consegui ler o pedido") {
-		t.Error("an unreadable position was not reported")
-	}
-	app.post(t, "/admin/products/"+auroraID+"/photos/img-9/move", url.Values{"to": {"0"}})
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "Essa foto não existe mais") {
-		t.Error("a missing photo was not reported")
-	}
-	if len(app.products.moves) != 2 {
-		t.Errorf("moves = %v, want only the two valid ones", app.products.moves)
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+		t.Errorf("Content-Type = %q", ct)
 	}
 }
 
-func TestDeletePhoto(t *testing.T) {
-	app := newTestApp(t, nil)
-	app.login(t)
-	app.products.add(auroraWithPhotos(2))
-	path := "/admin/products/" + auroraID + "/photos/img-1/delete"
-
-	res, body := app.get(t, path, nil)
-	if res.StatusCode != http.StatusOK || !strings.Contains(body, `src="`+testImageBaseURL+`/produtos/img-1-600.jpg"`) ||
-		!strings.Contains(body, "Ela é a capa") {
-		t.Errorf("confirmation: status %d, want the photo shown and the cover warning", res.StatusCode)
-	}
-	if res, _ := app.get(t, "/admin/products/"+auroraID+"/photos/img-9/delete", nil); res.StatusCode != http.StatusNotFound {
-		t.Errorf("confirmation for a missing photo: status %d, want 404", res.StatusCode)
-	}
-
-	res, _ = app.post(t, path, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/products/"+auroraID+"#fotos" {
-		t.Errorf("delete: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
-	}
-	if n := len(app.products.products[auroraID].Images); n != 1 {
-		t.Errorf("%d photos left, want 1", n)
-	}
-
-	app.products.photoErr = errors.New("database down")
-	app.post(t, "/admin/products/"+auroraID+"/photos/img-2/delete", nil)
-	if _, body := app.get(t, "/admin/products/"+auroraID, nil); !strings.Contains(body, "Não consegui apagar a foto agora") {
-		t.Error("a failed delete was not reported")
-	}
-}
-
-func TestPhotoRoutesRequireLogin(t *testing.T) {
-	app := newTestApp(t, nil)
-	app.products.add(auroraWithPhotos(1))
-	for _, path := range []string{
-		"/admin/products/" + auroraID + "/photos",
-		"/admin/products/" + auroraID + "/photos/img-1/move",
-		"/admin/products/" + auroraID + "/photos/img-1/delete",
-	} {
-		if res, _ := app.post(t, path, url.Values{"to": {"0"}}); res.Header.Get("Location") != "/login" {
-			t.Errorf("anonymous POST %s: status %d, location %q", path, res.StatusCode, res.Header.Get("Location"))
-		}
-	}
-	if len(app.products.products[auroraID].Images) != 1 || len(app.products.moves) != 0 {
-		t.Error("an anonymous request changed the photos")
+func TestPhotoPreviewsAllowedByCSP(t *testing.T) {
+	w := httptest.NewRecorder()
+	SecureHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).
+		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: blob:") {
+		t.Errorf("CSP %q does not allow blob: previews", csp)
 	}
 }

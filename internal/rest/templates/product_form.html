@@ -2,132 +2,126 @@
 
 {{define "header"}}{{template "admin-header" .}}{{end}}
 
+{{define "scripts"}}<script src="{{asset "photos.js"}}" defer></script>{{end}}
+
 {{define "content"}}
 {{template "flash" .}}
 <div class="card">
   <h1>{{if .ID}}Editar peça{{else}}Nova peça{{end}}</h1>
-  {{with .Alert}}<p class="alert" role="alert">{{.}}</p>{{end}}
 
-  <form method="post" action="{{if .ID}}/admin/products/{{.ID}}{{else}}/admin/products{{end}}" novalidate>
-    {{$e := .Errors}}
-
-    <label for="name">Nome da peça</label>
-    <input id="name" name="name" type="text" value="{{.Form.Name}}" required
-           placeholder="Biquíni Aurora" autocomplete="off"
-           {{with index $e "name"}}aria-invalid="true" aria-describedby="name-error"{{end}}
-           {{if not .ID}}autofocus{{end}}>
-    {{with index $e "name"}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
-
-    <label for="price">Preço <span class="hint">(opcional)</span></label>
-    <div class="price">
-      <span aria-hidden="true">R$</span>
-      <input id="price" name="price" type="text" inputmode="decimal" value="{{.Form.Price}}"
-             placeholder="189,90" autocomplete="off"
-             aria-describedby="{{with index $e "price"}}price-error {{end}}price-hint"
-             {{with index $e "price"}}aria-invalid="true"{{end}}>
+  {{/* photos.js sends this form itself, with the photos as arranged on
+       screen. Without JavaScript it posts as it is, and new photos go
+       after the existing ones. The data-* regions are what photos.js
+       swaps in from the answer when the save is refused, so the photos
+       chosen stay on screen. */}}
+  <form method="post" action="{{if .ID}}/admin/products/{{.ID}}{{else}}/admin/products{{end}}"
+        enctype="multipart/form-data" novalidate data-product-form>
+    <div data-form-messages>
+      {{with .Alert}}<p class="alert" role="alert">{{.}}</p>{{end}}
     </div>
-    <p class="hint" id="price-hint">Em reais, como 189,90. Pode deixar vazio e preencher depois.</p>
-    {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
 
-    <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>
-      <legend>Tamanhos disponíveis</legend>
-      <div class="choices">
-        {{range .Sizes}}
-        <label class="choice"><input type="checkbox" name="sizes" value="{{.}}" {{if $.Form.HasSize .}}checked{{end}}> {{.}}</label>
+    <div data-fields>
+      {{$e := .Errors}}
+
+      <label for="name">Nome da peça</label>
+      <input id="name" name="name" type="text" value="{{.Form.Name}}" required
+             placeholder="Biquíni Aurora" autocomplete="off"
+             {{with index $e "name"}}aria-invalid="true" aria-describedby="name-error"{{end}}
+             {{if not .ID}}autofocus{{end}}>
+      {{with index $e "name"}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+
+      <label for="price">Preço <span class="hint">(opcional)</span></label>
+      <div class="price">
+        <span aria-hidden="true">R$</span>
+        <input id="price" name="price" type="text" inputmode="decimal" value="{{.Form.Price}}"
+               placeholder="189,90" autocomplete="off"
+               aria-describedby="{{with index $e "price"}}price-error {{end}}price-hint"
+               {{with index $e "price"}}aria-invalid="true"{{end}}>
+      </div>
+      <p class="hint" id="price-hint">Em reais, como 189,90. Pode deixar vazio e preencher depois.</p>
+      {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
+
+      <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>
+        <legend>Tamanhos disponíveis</legend>
+        <div class="choices">
+          {{range .Sizes}}
+          <label class="choice"><input type="checkbox" name="sizes" value="{{.}}" {{if $.Form.HasSize .}}checked{{end}}> {{.}}</label>
+          {{end}}
+        </div>
+      </fieldset>
+      {{with index $e "sizes"}}<p class="field-error" id="sizes-error">{{.}}</p>{{end}}
+
+      <label for="description">Descrição curta</label>
+      <textarea id="description" name="description" rows="2" aria-describedby="description-hint">{{.Form.Description}}</textarea>
+      <p class="hint" id="description-hint">Aparece no card da peça. Uma frase basta.</p>
+
+      <label for="details">Detalhes</label>
+      <textarea id="details" name="details" rows="5" aria-describedby="details-hint">{{.Form.Details}}</textarea>
+      <p class="hint" id="details-hint">Um detalhe por linha. Aparecem como lista na página da peça.</p>
+
+      <label class="check" for="sold_out">
+        <input id="sold_out" name="sold_out" type="checkbox" {{if .Form.SoldOut}}checked{{end}}>
+        <span>Esgotada <span class="hint">— continua no site, com o aviso “Esgotado”</span></span>
+      </label>
+
+      {{if .ID}}
+      <details {{if index $e "slug"}}open{{end}}>
+        <summary>Opções avançadas</summary>
+        <label for="slug">Endereço da peça no site</label>
+        <input id="slug" name="slug" type="text" value="{{.Form.Slug}}" autocomplete="off"
+               autocapitalize="none" spellcheck="false"
+               aria-describedby="{{with index $e "slug"}}slug-error {{end}}slug-hint"
+               {{with index $e "slug"}}aria-invalid="true"{{end}}>
+        <p class="hint" id="slug-hint">É o final do link da peça. Mudar quebra os links que já foram compartilhados. Deixe vazio para gerar a partir do nome.</p>
+        {{with index $e "slug"}}<p class="field-error" id="slug-error">{{.}}</p>{{end}}
+      </details>
+      {{end}}
+    </div>
+
+    <section class="photo-section" id="fotos" aria-labelledby="fotos-title"
+             data-photos data-max="{{.MaxPhotos}}" data-max-mb="{{.MaxPhotoMB}}">
+      <h2 id="fotos-title">Fotos</h2>
+      <p class="hint">A primeira é a capa, que aparece na lista do site. Nada muda nas fotos até você clicar em “{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}”.</p>
+
+      <div data-photo-errors>
+        {{if .PhotoErrors}}
+        <div class="alert" role="alert">
+          <p>Não deu para usar {{if eq (len .PhotoErrors) 1}}esta foto{{else}}estas fotos{{end}}:</p>
+          <ul>{{range .PhotoErrors}}<li>{{.}}</li>{{end}}</ul>
+        </div>
         {{end}}
       </div>
-    </fieldset>
-    {{with index $e "sizes"}}<p class="field-error" id="sizes-error">{{.}}</p>{{end}}
 
-    <label for="description">Descrição curta</label>
-    <textarea id="description" name="description" rows="2" aria-describedby="description-hint">{{.Form.Description}}</textarea>
-    <p class="hint" id="description-hint">Aparece no card da peça. Uma frase basta.</p>
+      <ol class="photos" data-photo-list>
+        {{range $i, $p := .Photos}}
+        <li class="photo" data-id="{{$p.ID}}" data-src="{{imageURL $p.Key600}}">
+          <img src="{{imageURL $p.Key600}}" alt="Foto {{add $i 1}}" loading="lazy">
+          {{if eq $i 0}}<div class="photo-actions"><span class="tag cover">Capa</span></div>{{end}}
+        </li>
+        {{end}}
+      </ol>
+      <p class="muted" data-photo-empty {{if .Photos}}hidden{{end}}>Ainda sem fotos. Sem foto, a peça aparece no site com um espaço vazio.</p>
+      <div data-photo-removed></div>
+      <p class="pending" data-photo-status role="status" aria-live="polite" hidden></p>
+      <noscript><p class="hint">Para mudar a ordem ou tirar fotos, o navegador precisa estar com o JavaScript ativado. Sem ele, as fotos escolhidas abaixo entram depois das que já existem.</p></noscript>
 
-    <label for="details">Detalhes</label>
-    <textarea id="details" name="details" rows="5" aria-describedby="details-hint">{{.Form.Details}}</textarea>
-    <p class="hint" id="details-hint">Um detalhe por linha. Aparecem como lista na página da peça.</p>
-
-    <label class="check" for="sold_out">
-      <input id="sold_out" name="sold_out" type="checkbox" {{if .Form.SoldOut}}checked{{end}}>
-      <span>Esgotada <span class="hint">— continua no site, com o aviso “Esgotado”</span></span>
-    </label>
-
-    {{if .ID}}
-    <details {{if index $e "slug"}}open{{end}}>
-      <summary>Opções avançadas</summary>
-      <label for="slug">Endereço da peça no site</label>
-      <input id="slug" name="slug" type="text" value="{{.Form.Slug}}" autocomplete="off"
-             autocapitalize="none" spellcheck="false"
-             aria-describedby="{{with index $e "slug"}}slug-error {{end}}slug-hint"
-             {{with index $e "slug"}}aria-invalid="true"{{end}}>
-      <p class="hint" id="slug-hint">É o final do link da peça. Mudar quebra os links que já foram compartilhados. Deixe vazio para gerar a partir do nome.</p>
-      {{with index $e "slug"}}<p class="field-error" id="slug-error">{{.}}</p>{{end}}
-    </details>
-    {{end}}
+      <div class="upload">
+        <label for="photos">Adicionar fotos</label>
+        <input id="photos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple
+               aria-describedby="photos-hint">
+        <p class="hint" id="photos-hint">Pode escolher várias de uma vez: até {{.MaxPhotos}} por peça, com até {{.MaxPhotoMB}} MB cada.</p>
+        <div data-photo-pick-errors></div>
+      </div>
+    </section>
 
     <div class="actions">
-      <button type="submit">{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}</button>
+      <button type="submit" data-submit>{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}</button>
       <a href="/admin">Cancelar</a>
     </div>
   </form>
 </div>
 
 {{if .ID}}
-<section class="card section" id="fotos" aria-labelledby="fotos-title">
-  <h2 id="fotos-title">Fotos</h2>
-  <p class="hint">A primeira é a capa, que aparece na lista do site. Tudo aqui é salvo na hora, a cada clique: a capa, a ordem e as fotos enviadas. Não precisa de outro botão.</p>
-  {{with .PhotoFlash}}<p class="ok" role="status">{{.}}</p>{{end}}
-  {{with .PhotoFlashError}}<p class="alert" role="alert">{{.}}</p>{{end}}
-
-  {{if .Photos}}
-  <ol class="photos">
-    {{range $i, $p := .Photos}}
-    <li class="photo">
-      <img src="{{imageURL $p.Key600}}" alt="Foto {{add $i 1}} de {{$.Form.Name}}" loading="lazy">
-      <div class="photo-actions">
-        {{if eq $i 0}}
-        <span class="cover">Capa</span>
-        {{else}}
-        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
-          <input type="hidden" name="to" value="0">
-          <button type="submit" class="secondary">Usar como capa</button>
-        </form>
-        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
-          <input type="hidden" name="to" value="{{add $i -1}}">
-          <button type="submit" class="secondary" aria-label="Passar a foto {{add $i 1}} para antes">↑ Antes</button>
-        </form>
-        {{end}}
-        {{if lt (add $i 1) (len $.Photos)}}
-        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
-          <input type="hidden" name="to" value="{{add $i 1}}">
-          <button type="submit" class="secondary" aria-label="Passar a foto {{add $i 1}} para depois">↓ Depois</button>
-        </form>
-        {{end}}
-        <a href="/admin/products/{{$.ID}}/photos/{{$p.ID}}/delete">Apagar</a>
-      </div>
-    </li>
-    {{end}}
-  </ol>
-  {{else}}
-  <p class="muted">Ainda sem fotos. Sem foto, a peça aparece no site com um espaço vazio.</p>
-  {{end}}
-
-  {{if lt (len .Photos) .MaxPhotos}}
-  <form class="upload" method="post" action="/admin/products/{{.ID}}/photos" enctype="multipart/form-data">
-    <h3>Adicionar fotos</h3>
-    <label for="photos">Escolha as fotos no celular ou no computador</label>
-    <input id="photos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple required
-           aria-describedby="photos-hint">
-    <p class="hint" id="photos-hint">Pode escolher várias de uma vez. Até {{.MaxPhotos}} por peça.</p>
-    <div class="actions">
-      <button type="submit">Enviar as fotos escolhidas</button>
-    </div>
-  </form>
-  {{else}}
-  <p class="muted">Esta peça já tem {{.MaxPhotos}} fotos, o máximo. Apague alguma para adicionar outra.</p>
-  {{end}}
-</section>
-
 <p class="actions"><a href="/admin/products/{{.ID}}/delete">Apagar esta peça</a></p>
 {{end}}
 {{end}}

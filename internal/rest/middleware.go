@@ -81,7 +81,8 @@ func RecoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 //
 // The CSP is restrictive from the start: the admin is server-rendered
 // HTML and needs no external script beyond HTMX, which is served from
-// /static.
+// /static. blob: images are the previews of photos chosen but not yet
+// sent (static/photos.js).
 func SecureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -89,7 +90,7 @@ func SecureHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; img-src 'self' data: https:; "+
+			"default-src 'self'; img-src 'self' data: blob: https:; "+
 				"style-src 'self' 'unsafe-inline'; script-src 'self'; "+
 				"frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)

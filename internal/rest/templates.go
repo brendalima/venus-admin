@@ -37,6 +37,7 @@ func NewTemplates(imageBaseURL string) (*Templates, error) {
 		"join":     strings.Join,
 		"add":      func(a, b int) int { return a + b },
 		"imageURL": func(key string) string { return imageBaseURL + "/" + key },
+		"asset":    assetURL,
 	}
 
 	pages, err := fs.Glob(templatesFS, "templates/*.html")

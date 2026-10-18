@@ -53,7 +53,6 @@ func run() error {
 	uRepository := repository.MustNewUser(db)
 	sRepository := repository.MustNewSession(db)
 	pRepository := repository.MustNewProduct(db)
-	iRepository := repository.MustNewImage(db)
 
 	imageStore := newImageStore(cfg, logger)
 
@@ -61,7 +60,6 @@ func run() error {
 	uService := services.MustNewUser(uRepository, sRepository)
 	pService := services.MustNewProduct(services.ProductInput{
 		Repo:      pRepository,
-		Images:    iRepository,
 		Store:     imageStore,
 		Processor: storage.NewJPEGProcessor(),
 	})
@@ -101,10 +99,6 @@ func run() error {
 	app.Handle("POST /admin/products/{id}/sold-out", private(rProduct.SetSoldOut))
 	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))
-	app.Handle("POST /admin/products/{id}/photos", private(rProduct.UploadPhotos))
-	app.Handle("POST /admin/products/{id}/photos/{photo}/move", private(rProduct.MovePhoto))
-	app.Handle("GET /admin/products/{id}/photos/{photo}/delete", private(rProduct.ConfirmDeletePhoto))
-	app.Handle("POST /admin/products/{id}/photos/{photo}/delete", private(rProduct.DeletePhoto))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", rHealth.Live)
