@@ -185,6 +185,15 @@ Three Neon branches, one per purpose:
 
 `test` started schema-only and holds no production data. Integration tests read **only** `TEST_DATABASE_URL`, so they cannot reach `dev` or `production` by accident.
 
+Photos follow the same split, with two R2 buckets and a token scoped to each, so a developer machine never holds credentials that write to production:
+
+| R2 bucket | Used by | Public address | Credentials live in |
+|---|---|---|---|
+| `venusoasis-fotos` | the app on Fly | `https://fotos.venusoasis.com.br` | `fly secrets` |
+| `venusoasis-fotos-dev` | `make run` on your machine | its `r2.dev` subdomain | `.env.local` |
+
+Leaving the R2 variables out of `.env.local` keeps photos in `.media/` instead.
+
 Shipping to production is a pull request merged into `master`: CI runs on the merge, and `.github/workflows/fly-deploy.yml` deploys only once CI has passed. `fly deploy` runs `/migrate` first (`release_command`), so a migration that fails stops the deploy.
 
 ## Configuration
