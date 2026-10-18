@@ -11,17 +11,28 @@ type HealthRepository interface {
 }
 
 // ProductRepository persists products. Reads return each product with
-// its images, cover first; writes leave the images alone, since photos
-// have their own lifecycle (upload, resize, R2).
+// its images, cover first. Image files are not the repository's: it keeps
+// their keys, and the caller stores and deletes the files.
 type ProductRepository interface {
 	List(ctx context.Context) ([]domain.Product, error)
 	GetByID(ctx context.Context, id string) (domain.Product, error)
 	GetBySlug(ctx context.Context, slug string) (domain.Product, error)
 
 	// Create places the new product at the end of the catalogue,
-	// ignoring p.Position.
+	// ignoring p.Position, with p.Images in the order given.
 	Create(ctx context.Context, p domain.Product) (domain.Product, error)
+
+	// Update saves the product's fields and leaves its images alone.
 	Update(ctx context.Context, p domain.Product) (domain.Product, error)
+
+	// UpdateWithImages saves the fields and makes the product's images
+	// exactly p.Images, in that order, in one transaction. The images
+	// named in added are inserted; the ones in removed are deleted and
+	// returned, so the caller can delete their files. Any other image
+	// must be one the product has, and every image it has must be in
+	// p.Images or removed. Otherwise the list changed since it was read:
+	// nothing is saved and *domain.StaleError comes back.
+	UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error)
 	Delete(ctx context.Context, id string) error
 
 	// HasUnpublishedChanges reports whether the catalogue changed after

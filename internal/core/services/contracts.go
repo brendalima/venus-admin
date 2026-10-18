@@ -24,22 +24,29 @@ type UserService interface {
 	GetByID(ctx context.Context, id string) (domain.User, error)
 }
 
-// ProductService manages the catalogue. Photos are not handled here yet
-// (M2): writes leave a product's images as they are.
+// ProductService manages the catalogue. A product's photos are saved
+// with it: Create and Update apply a photo edit together with the fields,
+// all or nothing.
 type ProductService interface {
 	List(ctx context.Context) ([]domain.Product, error)
 	GetByID(ctx context.Context, id string) (domain.Product, error)
 
-	// Create derives the slug from the name and places the product at the
-	// end of the catalogue. Invalid input comes back as joined
-	// *domain.ValidationError, one per field.
-	Create(ctx context.Context, p domain.Product) (domain.Product, error)
+	// Create derives the slug from the name, places the product at the
+	// end of the catalogue, and adds the photos in photos, which may be
+	// nil. Invalid input comes back as joined *domain.ValidationError,
+	// one per field and one per new photo that is not usable
+	// (domain.PhotoErrorField), all at once.
+	Create(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error)
 
 	// Update keeps the product's place in the catalogue. The slug only
 	// changes when p.Slug asks for it; an empty one is derived from the
-	// name again.
-	Update(ctx context.Context, p domain.Product) (domain.Product, error)
+	// name again. A nil photos leaves the photos as they are. A photo
+	// list that changed elsewhere since it was loaded comes back as
+	// *domain.StaleError, with nothing saved.
+	Update(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error)
 
 	SetSoldOut(ctx context.Context, id string, soldOut bool) (domain.Product, error)
+
+	// Delete removes the product and its photo files.
 	Delete(ctx context.Context, id string) error
 }

@@ -44,6 +44,13 @@ type productFormPage struct {
 	Errors map[string]string // by field
 	Alert  string            // a problem that belongs to no field
 	Sizes  []string          // every size on offer
+
+	// Photos are the ones stored; changes made on screen live in the
+	// browser (static/photos.js) until the form is saved.
+	Photos      []domain.Image
+	PhotoErrors []string // one per file that could not be used, naming it
+	MaxPhotos   int
+	MaxPhotoMB  int
 }
 
 type productDeletePage struct {
@@ -169,19 +176,20 @@ func (h *Product) New(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Product) Create(w http.ResponseWriter, r *http.Request) {
-	if !h.parseForm(w, r) {
+	sub, ok := h.readProductSubmission(w, r, productFormPage{})
+	if !ok {
 		return
 	}
-	form := readProductForm(r)
-	p, priceErr := form.product()
+	page := productFormPage{Form: sub.form}
+	p, priceErr := sub.form.product()
 	if priceErr != nil {
-		h.priceUnreadable(w, r, productFormPage{Form: form}, p)
+		h.priceUnreadable(w, r, page, p)
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), p)
+	created, err := h.service.Create(r.Context(), p, sub.photos)
 	if err != nil {
-		h.saveFailed(w, r, productFormPage{Form: form}, err)
+		h.saveFailed(w, r, page, sub, err)
 		return
 	}
 	h.flash(r, sessionFlashKey, "“"+created.Name+"” foi cadastrada.")
@@ -193,25 +201,26 @@ func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.renderForm(w, r, http.StatusOK, productFormPage{ID: p.ID, Form: productFormFrom(p)})
+	h.renderForm(w, r, http.StatusOK, productFormPage{ID: p.ID, Form: productFormFrom(p), Photos: p.Images})
 }
 
 func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
-	if !h.parseForm(w, r) {
+	id := r.PathValue("id")
+	sub, ok := h.readProductSubmission(w, r, productFormPage{ID: id})
+	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	form := readProductForm(r)
-	p, priceErr := form.product()
+	page := productFormPage{ID: id, Form: sub.form}
+	p, priceErr := sub.form.product()
 	p.ID = id
 	if priceErr != nil {
-		h.priceUnreadable(w, r, productFormPage{ID: id, Form: form}, p)
+		h.priceUnreadable(w, r, page, p)
 		return
 	}
 
-	updated, err := h.service.Update(r.Context(), p)
+	updated, err := h.service.Update(r.Context(), p, sub.photos)
 	if err != nil {
-		h.saveFailed(w, r, productFormPage{ID: id, Form: form}, err)
+		h.saveFailed(w, r, page, sub, err)
 		return
 	}
 	h.flash(r, sessionFlashKey, "As alterações em “"+updated.Name+"” foram salvas.")
@@ -322,7 +331,11 @@ func (h *Product) parseForm(w http.ResponseWriter, r *http.Request) bool {
 
 // saveFailed answers a create or update the service refused, showing the
 // form again as it was sent.
-func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page productFormPage, err error) {
+// saveFailed answers a create or update the service refused, showing the
+// form again as it was sent. New photos cannot be put back into a file
+// field, so without JavaScript they have to be chosen again; with it, the
+// browser still holds them and only the messages are swapped in.
+func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page productFormPage, sub productSubmission, err error) {
 	ctx := r.Context()
 
 	var notFound *domain.NotFoundError
@@ -331,14 +344,22 @@ func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page produc
 			"Peça não encontrada", "Talvez alguém a tenha apagado enquanto você editava.")
 		return
 	}
+	var stale *domain.StaleError
+	if errors.As(err, &stale) {
+		page.Alert = "As fotos desta peça mudaram enquanto você editava, talvez em outro aparelho. " +
+			"Nada foi salvo: recarregue a página para ver as fotos como estão agora e refaça as mudanças."
+		h.renderForm(w, r, http.StatusConflict, page)
+		return
+	}
 
 	errs := fieldErrors(err)
 	if len(errs) == 0 {
 		slog.ErrorContext(ctx, "couldn't save product", "error", err)
-		page.Alert = "Não consegui salvar agora. Nada foi perdido: tente de novo em instantes."
+		page.Alert = "Não consegui salvar agora. Nada foi salvo: tente de novo em instantes."
 		h.renderForm(w, r, http.StatusInternalServerError, page)
 		return
 	}
+	page.PhotoErrors = takePhotoErrors(errs, sub.fileNames)
 	h.renderInvalid(w, r, page, errs)
 }
 
@@ -363,13 +384,25 @@ func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page pro
 			page.Errors["name"] = msg
 		}
 	}
-	page.Alert = "Confira os campos marcados abaixo."
+	page.Alert = "Nada foi salvo. Confira o que está marcado abaixo."
 	h.renderForm(w, r, http.StatusBadRequest, page)
 }
 
 func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int, page productFormPage) {
 	page.adminLayout = h.layout(r)
 	page.Sizes = domain.AllSizes()
+	page.MaxPhotos = domain.MaxImages
+	page.MaxPhotoMB = maxPhotoBytes >> 20
+	if page.ID != "" && page.Photos == nil {
+		// A rejected edit shows the form again; the photos come from the
+		// database, not from what was posted. Without them the section
+		// would look empty, so a failure here is only logged.
+		p, err := h.service.GetByID(r.Context(), page.ID)
+		if err != nil {
+			slog.WarnContext(r.Context(), "couldn't load photos for the form", "error", err)
+		}
+		page.Photos = p.Images
+	}
 	h.templates.render(w, r, status, "product_form.html", page)
 }
 

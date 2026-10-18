@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	testEmail    = "ana@exemplo.com"
-	testPassword = "uma senha longa"
+	testEmail        = "ana@exemplo.com"
+	testPassword     = "uma senha longa"
+	testImageBaseURL = "https://fotos.example.com"
 )
 
 type mockUserService struct {
@@ -77,7 +78,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		limiter = NewLoginLimiter(100, time.Minute)
 	}
 	service := newMockUserService()
-	templates := MustNewTemplates()
+	templates := MustNewTemplates(testImageBaseURL)
 	sessions := MustNewSessionManager(memstore.NewWithCleanupInterval(0), false)
 	auth := MustNewAuth(AuthInput{
 		Service:   service,
@@ -175,7 +176,7 @@ func TestNewAuthRejectsMissingDependencies(t *testing.T) {
 		Service:   newMockUserService(),
 		Sessions:  MustNewSessionManager(memstore.NewWithCleanupInterval(0), false),
 		Limiter:   NewLoginLimiter(1, time.Minute),
-		Templates: MustNewTemplates(),
+		Templates: MustNewTemplates(testImageBaseURL),
 	}
 	for name, in := range map[string]AuthInput{
 		"service":   {Sessions: full.Sessions, Limiter: full.Limiter, Templates: full.Templates},

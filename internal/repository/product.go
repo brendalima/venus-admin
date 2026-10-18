@@ -80,12 +80,21 @@ func (r *Product) GetBySlug(ctx context.Context, slug string) (domain.Product, e
 	return r.getOne(ctx, `SELECT `+productColumns+` FROM products WHERE slug = $1`, slug)
 }
 
+// Create inserts the product and its images, in the order given, in one
+// transaction: a product never exists without the photos it was saved
+// with.
 func (r *Product) Create(ctx context.Context, p domain.Product) (domain.Product, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	// Taking max(position) + 1 can race with another insert, which at
 	// worst leaves two products sharing a position; ordering then falls
 	// back to created_at. With two or three people using the admin that
 	// is not worth a lock.
-	err := r.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`INSERT INTO products (id, slug, name, price_cents, sizes, description, details, sold_out, position)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
 		         (SELECT COALESCE(max(position), 0) + 1 FROM products))
@@ -96,7 +105,17 @@ func (r *Product) Create(ctx context.Context, p domain.Product) (domain.Product,
 		return domain.Product{}, translateWriteError(err, "couldn't create product")
 	}
 
-	p.Images = []domain.Image{}
+	images := make([]domain.Image, len(p.Images))
+	for i, img := range p.Images {
+		if images[i], err = insertImageRow(ctx, tx, p.ID, img, i); err != nil {
+			return domain.Product{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't commit product: %w", err)
+	}
+	p.Images = images
 	return p, nil
 }
 
@@ -126,6 +145,141 @@ func (r *Product) Update(ctx context.Context, p domain.Product) (domain.Product,
 		return domain.Product{}, err
 	}
 	return updated[0], nil
+}
+
+func (r *Product) UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error) {
+	if uuid.Validate(p.ID) != nil {
+		return domain.Product{}, nil, domain.NewNotFoundError("product not found")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Product{}, nil, fmt.Errorf("couldn't begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	err = tx.QueryRowContext(ctx,
+		`UPDATE products
+		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
+		     details = $7, sold_out = $8, position = $9
+		 WHERE id = $1
+		 RETURNING created_at, updated_at`,
+		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
+	).Scan(&p.CreatedAt, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Product{}, nil, domain.NewNotFoundError("product not found")
+	}
+	if err != nil {
+		return domain.Product{}, nil, translateWriteError(err, "couldn't update product")
+	}
+
+	// Locked, so a concurrent save of the same product waits and then
+	// sees this one's result rather than interleaving with it.
+	current, err := lockImages(ctx, tx, p.ID)
+	if err != nil {
+		return domain.Product{}, nil, err
+	}
+
+	stale := domain.NewStaleError("photos changed since they were loaded")
+	isNew, toRemove, wanted := set(added), set(removed), map[string]bool{}
+	for _, img := range p.Images {
+		wanted[img.ID] = true
+		// A photo kept on screen but deleted meanwhile cannot be kept:
+		// its files are gone.
+		if _, exists := current[img.ID]; !exists && !isNew[img.ID] {
+			return domain.Product{}, nil, stale
+		}
+	}
+	var gone []domain.Image
+	for id, img := range current {
+		switch {
+		case wanted[id]:
+		case toRemove[id]:
+			gone = append(gone, img)
+		default: // added elsewhere, never shown to this person
+			return domain.Product{}, nil, stale
+		}
+	}
+
+	for _, img := range gone {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM product_images WHERE id = $1`, img.ID); err != nil {
+			return domain.Product{}, nil, fmt.Errorf("couldn't delete image: %w", err)
+		}
+	}
+	images := make([]domain.Image, len(p.Images))
+	for i, img := range p.Images {
+		stored, exists := current[img.ID]
+		if !exists {
+			if images[i], err = insertImageRow(ctx, tx, p.ID, img, i); err != nil {
+				return domain.Product{}, nil, err
+			}
+			continue
+		}
+		// Only rows whose place changes are written, so the change
+		// triggers fire for what really moved.
+		if int(stored.Position) != i {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE product_images SET position = $2 WHERE id = $1`, img.ID, i,
+			); err != nil {
+				return domain.Product{}, nil, fmt.Errorf("couldn't reorder image: %w", err)
+			}
+			stored.Position = int32(i)
+		}
+		images[i] = stored
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.Product{}, nil, fmt.Errorf("couldn't commit product: %w", err)
+	}
+	p.Images = images
+	return p, gone, nil
+}
+
+// lockImages reads a product's image rows, by ID, holding them until the
+// transaction ends.
+func lockImages(ctx context.Context, tx *sql.Tx, productID string) (map[string]domain.Image, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+imageColumns+` FROM product_images WHERE product_id = $1 FOR UPDATE`, productID)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list product images: %w", err)
+	}
+	defer rows.Close()
+
+	images := map[string]domain.Image{}
+	for rows.Next() {
+		var img domain.Image
+		if err := rows.Scan(&img.ID, &img.ProductID, &img.Key600, &img.Key1200, &img.Position, &img.CreatedAt); err != nil {
+			return nil, fmt.Errorf("couldn't read product image: %w", err)
+		}
+		images[img.ID] = img
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("couldn't list product images: %w", err)
+	}
+	return images, nil
+}
+
+func insertImageRow(ctx context.Context, tx *sql.Tx, productID string, img domain.Image, position int) (domain.Image, error) {
+	img.ProductID = productID
+	img.Position = int32(position)
+	err := tx.QueryRowContext(ctx,
+		`INSERT INTO product_images (id, product_id, key_600, key_1200, position)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING created_at`,
+		img.ID, productID, img.Key600, img.Key1200, position,
+	).Scan(&img.CreatedAt)
+	if err != nil {
+		return domain.Image{}, fmt.Errorf("couldn't add image: %w", err)
+	}
+	return img, nil
+}
+
+func set(ids []string) map[string]bool {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
 }
 
 // Delete removes the product and, by cascade, its image rows. The files in

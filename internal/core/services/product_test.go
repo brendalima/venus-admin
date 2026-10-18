@@ -67,8 +67,27 @@ func (m *mockProductRepository) Update(_ context.Context, p domain.Product) (dom
 		return domain.Product{}, m.writeErr
 	}
 	m.writes++
+	p.Images = m.products[p.ID].Images // a plain update leaves them alone
 	m.products[p.ID] = p
 	return p, nil
+}
+
+// UpdateWithImages trusts the service's own staleness check, which is
+// what these tests exercise; the real one is covered by the repository's
+// integration tests.
+func (m *mockProductRepository) UpdateWithImages(_ context.Context, p domain.Product, _, removed []string) (domain.Product, []domain.Image, error) {
+	if m.writeErr != nil {
+		return domain.Product{}, nil, m.writeErr
+	}
+	m.writes++
+	var gone []domain.Image
+	for _, img := range m.products[p.ID].Images {
+		if slices.Contains(removed, img.ID) {
+			gone = append(gone, img)
+		}
+	}
+	m.products[p.ID] = p
+	return p, gone, nil
 }
 
 func (m *mockProductRepository) Delete(_ context.Context, id string) error {
@@ -106,16 +125,26 @@ var existing = domain.Product{
 }
 
 func TestNewProduct(t *testing.T) {
-	if _, err := NewProduct(nil); err == nil {
-		t.Error("a nil repository should be rejected")
+	full := ProductInput{Repo: newMockProductRepository(), Store: newMockImageStore(), Processor: &mockProcessor{}}
+	for name, in := range map[string]ProductInput{
+		"repository": {Store: full.Store, Processor: full.Processor},
+		"store":      {Repo: full.Repo, Processor: full.Processor},
+		"processor":  {Repo: full.Repo, Store: full.Store},
+	} {
+		if _, err := NewProduct(in); err == nil {
+			t.Errorf("missing %s was accepted", name)
+		}
+	}
+	if _, err := NewProduct(full); err != nil {
+		t.Errorf("complete input rejected: %v", err)
 	}
 }
 
 func TestProductCreate(t *testing.T) {
 	repo := newMockProductRepository()
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
-	p, err := s.Create(context.Background(), validInput())
+	p, err := s.Create(context.Background(), validInput(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +180,7 @@ func TestProductCreateFailures(t *testing.T) {
 				tt.edit(&in)
 			}
 
-			_, err := MustNewProduct(repo).Create(context.Background(), in)
+			_, err := newTestProductService(repo).Create(context.Background(), in, nil)
 
 			var v *domain.ValidationError
 			if tt.wantField == "" {
@@ -191,7 +220,7 @@ func TestProductUpdate(t *testing.T) {
 			in.Slug = tt.slug
 			in.Position = 99 // ignored
 
-			p, err := MustNewProduct(repo).Update(context.Background(), in)
+			p, err := newTestProductService(repo).Update(context.Background(), in, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -225,7 +254,7 @@ func TestProductUpdateFailures(t *testing.T) {
 			in := validInput()
 			in.ID = tt.id
 
-			_, err := MustNewProduct(repo).Update(context.Background(), in)
+			_, err := newTestProductService(repo).Update(context.Background(), in, nil)
 
 			var v *domain.ValidationError
 			var nf *domain.NotFoundError
@@ -249,7 +278,7 @@ func TestProductUpdateFailures(t *testing.T) {
 
 func TestProductSetSoldOut(t *testing.T) {
 	repo := newMockProductRepository(existing)
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
 	p, err := s.SetSoldOut(context.Background(), existing.ID, true)
 	if err != nil || !p.SoldOut {
@@ -270,7 +299,7 @@ func TestProductSetSoldOut(t *testing.T) {
 
 func TestProductDelete(t *testing.T) {
 	repo := newMockProductRepository(existing)
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
 	if err := s.Delete(context.Background(), existing.ID); err != nil {
 		t.Fatal(err)

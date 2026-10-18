@@ -12,3 +12,6 @@ bin
 **/*.out
 **/coverage.html
 fly.toml
+
+# photos uploaded in development
+.media

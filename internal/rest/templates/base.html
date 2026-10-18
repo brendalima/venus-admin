@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>{{block "title" .}}Vênus Oasis{{end}} — Admin</title>
 <script src="/static/htmx-2.0.4.min.js" defer></script>
+{{block "scripts" .}}{{end}}
 <style>
   :root {
     --bg: #faf7f4; --surface: #fff; --text: #2b2420; --muted: #75685f;
@@ -95,6 +96,37 @@
     border-radius: 1rem; background: var(--error-bg); color: var(--error-text); margin-left: .25rem;
   }
   .htmx-request button { opacity: .6; }
+  h2 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  /* Photos are portrait. No width/height attributes on these images: they
+     would beat aspect-ratio, and a thumbnail would render full height. */
+  .product a { display: flex; align-items: center; gap: .75rem; }
+  .thumb {
+    flex: none; width: 3.5rem; aspect-ratio: 3 / 4; object-fit: cover;
+    border-radius: .4rem; background: var(--bg); border: 1px solid var(--border);
+  }
+  .photos { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: .75rem; }
+  .photo { display: flex; align-items: flex-start; gap: .75rem; }
+  .photo img {
+    flex: none; width: 6rem; height: auto; aspect-ratio: 3 / 4; object-fit: cover;
+    border-radius: .5rem; background: var(--bg); border: 1px solid var(--border);
+  }
+  .photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .photo-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+  .tag {
+    font-size: .85rem; font-weight: 700; padding: .2rem .6rem; border-radius: 1rem;
+    background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+  }
+  .tag.cover { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
+  .tag.new { background: #fff4d6; color: #6b4e00; border-color: transparent; }
+  .photo.removed img { opacity: .4; filter: grayscale(1); }
+  .removed-list h3 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+  .pending {
+    background: #fff4d6; color: #6b4e00; border-radius: .5rem; padding: .75rem 1rem; margin: 1rem 0 0;
+  }
+  .alert ul { margin: .25rem 0 0; padding-left: 1.25rem; }
+  .alert p { margin: 0; }
+  .upload { margin-top: 1.25rem; }
+  input[type=file] { display: block; width: 100%; font: inherit; padding: .5rem 0; }
 </style>
 </head>
 <body>

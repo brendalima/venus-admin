@@ -18,6 +18,7 @@ import (
 	"github.com/brendalima/venus-admin/internal/core/services"
 	"github.com/brendalima/venus-admin/internal/repository"
 	"github.com/brendalima/venus-admin/internal/rest"
+	"github.com/brendalima/venus-admin/internal/storage"
 )
 
 func main() {
@@ -53,11 +54,17 @@ func run() error {
 	sRepository := repository.MustNewSession(db)
 	pRepository := repository.MustNewProduct(db)
 
+	imageStore := newImageStore(cfg, logger)
+
 	hService := services.MustNewHealth(hRepository)
 	uService := services.MustNewUser(uRepository, sRepository)
-	pService := services.MustNewProduct(pRepository)
+	pService := services.MustNewProduct(services.ProductInput{
+		Repo:      pRepository,
+		Store:     imageStore,
+		Processor: storage.NewJPEGProcessor(),
+	})
 
-	templates := rest.MustNewTemplates()
+	templates := rest.MustNewTemplates(cfg.ImageBaseURL)
 	sessions := rest.MustNewSessionManager(sRepository, cfg.IsProd())
 	rHealth := rest.MustNewHealth(hService)
 	rAuth := rest.MustNewAuth(rest.AuthInput{
@@ -97,6 +104,9 @@ func run() error {
 	mux.HandleFunc("GET /healthz", rHealth.Live)
 	mux.HandleFunc("GET /readyz", rHealth.Ready)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", rest.MustNewStatic()))
+	if cfg.MediaDir != "" {
+		mux.Handle("GET /media/", http.StripPrefix("/media/", rest.MustNewMedia(cfg.MediaDir)))
+	}
 	mux.Handle("/", sessions.LoadAndSave(app))
 
 	handler := rest.Chain(mux,
@@ -107,6 +117,21 @@ func run() error {
 	)
 
 	return serve(ctx, logger, newServer(cfg.Addr(), handler))
+}
+
+// newImageStore keeps photos in R2 when it is configured. Config only
+// allows going without it in development, where photos stay on disk.
+func newImageStore(cfg adapters.Config, logger *slog.Logger) storage.ImageStore {
+	if !cfg.R2.Configured() {
+		logger.Warn("no R2 settings: photos are kept on disk", "dir", cfg.MediaDir)
+		return storage.MustNewDisk(cfg.MediaDir)
+	}
+	return storage.MustNewR2(storage.R2Input{
+		AccountID:       cfg.R2.AccountID,
+		AccessKeyID:     cfg.R2.AccessKeyID,
+		SecretAccessKey: cfg.R2.SecretAccessKey,
+		Bucket:          cfg.R2.Bucket,
+	})
 }
 
 func newLogger(cfg adapters.Config) *slog.Logger {

@@ -25,6 +25,8 @@ type mockProductService struct {
 	writeErr error // returned by Create, Update, SetSoldOut and Delete
 	created  []domain.Product
 	updated  []domain.Product
+	photoErr error               // returned by Create and Update when a photo edit is sent
+	edits    []*domain.PhotoEdit // every photo edit received, nil included
 }
 
 func newMockProductService() *mockProductService {
@@ -58,35 +60,101 @@ func (m *mockProductService) GetByID(_ context.Context, id string) (domain.Produ
 	return p, nil
 }
 
-func (m *mockProductService) Create(_ context.Context, p domain.Product) (domain.Product, error) {
+func (m *mockProductService) Create(_ context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+	m.edits = append(m.edits, photos)
 	p = p.Normalized()
 	p.Slug = domain.Slugify(p.Name)
-	if err := p.Validate(); err != nil {
+	images, err := m.applyPhotos(nil, photos, p.Validate())
+	if err != nil {
 		return domain.Product{}, err
 	}
 	if m.writeErr != nil {
 		return domain.Product{}, m.writeErr
 	}
 	p.ID = fmt.Sprintf("new-%d", len(m.created)+1)
+	p.Images = images
 	m.created = append(m.created, p)
 	m.products[p.ID] = p
 	return p, nil
 }
 
-func (m *mockProductService) Update(_ context.Context, p domain.Product) (domain.Product, error) {
+func (m *mockProductService) Update(_ context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+	m.edits = append(m.edits, photos)
 	p = p.Normalized()
-	if err := p.Validate(); err != nil {
+	if p.Slug = domain.Slugify(p.Slug); p.Slug == "" {
+		p.Slug = domain.Slugify(p.Name)
+	}
+	current, ok := m.products[p.ID]
+	if !ok {
+		return domain.Product{}, fmt.Errorf("couldn't load product: %w", domain.NewNotFoundError("product not found"))
+	}
+	images, err := m.applyPhotos(current.Images, photos, p.Validate())
+	if err != nil {
 		return domain.Product{}, err
 	}
 	if m.writeErr != nil {
 		return domain.Product{}, m.writeErr
 	}
-	if _, ok := m.products[p.ID]; !ok {
-		return domain.Product{}, fmt.Errorf("couldn't load product: %w", domain.NewNotFoundError("product not found"))
-	}
+	p.Images = images
 	m.updated = append(m.updated, p)
 	m.products[p.ID] = p
 	return p, nil
+}
+
+// applyPhotos follows the real service's rules closely enough for the
+// handlers: every problem at once, a file reading "not a photo" refused by
+// index, and a photo the screen did not know about making the edit stale.
+func (m *mockProductService) applyPhotos(current []domain.Image, edit *domain.PhotoEdit, fieldErr error) ([]domain.Image, error) {
+	if edit == nil {
+		return current, fieldErr
+	}
+	if m.photoErr != nil {
+		return nil, m.photoErr
+	}
+	e := *edit
+	if e.AppendNew {
+		e.Order = nil
+		for _, img := range current {
+			e.Order = append(e.Order, domain.PhotoSlot{ImageID: img.ID})
+		}
+		for i := range e.New {
+			e.Order = append(e.Order, domain.PhotoSlot{NewIndex: i})
+		}
+	}
+	if err := e.Validate(); err != nil {
+		return nil, errors.Join(fieldErr, err)
+	}
+	byID := map[string]domain.Image{}
+	for _, img := range current {
+		byID[img.ID] = img
+	}
+	errs := []error{fieldErr}
+	for i, src := range e.New {
+		data, err := src.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		if string(data) == notAPhoto {
+			errs = append(errs, domain.NewValidationError(domain.PhotoErrorField(i), "Esse arquivo não é uma foto em JPEG, PNG ou WebP."))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	images := []domain.Image{}
+	for _, slot := range e.Order {
+		if slot.ImageID == "" {
+			id := fmt.Sprintf("added-%d", slot.NewIndex)
+			images = append(images, domain.Image{ID: id, Key600: "produtos/" + id + "-600.jpg"})
+			continue
+		}
+		img, ok := byID[slot.ImageID]
+		if !ok {
+			return nil, domain.NewStaleError("photos changed since they were loaded")
+		}
+		images = append(images, img)
+	}
+	return images, nil
 }
 
 func (m *mockProductService) SetSoldOut(_ context.Context, id string, soldOut bool) (domain.Product, error) {
@@ -243,7 +311,7 @@ func TestProductCreateRejected(t *testing.T) {
 			name:       "every problem at once",
 			edit:       func(f url.Values) { f.Set("name", " "); f.Del("sizes") },
 			wantStatus: http.StatusBadRequest,
-			wantText:   []string{"Confira os campos marcados", "Falta o nome da peça", "Escolha ao menos um tamanho"},
+			wantText:   []string{"Nada foi salvo. Confira o que está marcado", "Falta o nome da peça", "Escolha ao menos um tamanho"},
 			wantValue:  "189,90",
 		},
 		{
@@ -275,7 +343,7 @@ func TestProductCreateRejected(t *testing.T) {
 			name:       "service down",
 			writeErr:   errors.New("database timeout"),
 			wantStatus: http.StatusInternalServerError,
-			wantText:   []string{"Nada foi perdido"},
+			wantText:   []string{"Nada foi salvo: tente de novo"},
 			wantValue:  "Biquíni Aurora",
 		},
 	}

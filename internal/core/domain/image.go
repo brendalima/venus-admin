@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"strconv"
+	"time"
+)
 
 // Image is one photo of a product, stored in two widths. Its place among
 // the product's photos is Position; the first one is the cover.
@@ -11,6 +15,10 @@ import "time"
 //
 // Only the object keys are kept. Public URLs are built from the bucket's
 // base URL, which belongs to the configuration, not to each image.
+// MaxImages is how many photos a product may have. The site shows them in
+// a gallery; past a dozen nobody scrolls, and the bucket fills up.
+const MaxImages = 12
+
 type Image struct {
 	ID        string
 	ProductID string
@@ -18,4 +26,81 @@ type Image struct {
 	Key1200   string
 	Position  int32
 	CreatedAt time.Time
+}
+
+// PhotoEdit is a product's photo list as the person left it on screen.
+// Nothing about photos is saved until the product is: the whole edit is
+// applied at once, or not at all.
+type PhotoEdit struct {
+	// Order is the final list, cover first.
+	Order []PhotoSlot
+	// Removed lists existing photos to delete. Every photo the product
+	// has must be either in Order or here: one in neither means the list
+	// changed elsewhere since the screen was loaded.
+	Removed []string
+	// New holds the photos being added; a slot refers to one by index.
+	New []PhotoSource
+	// AppendNew asks to keep the existing photos as they are and add New
+	// after them, ignoring Order and Removed. It is what a form submitted
+	// without JavaScript can express.
+	AppendNew bool
+}
+
+// PhotoSlot is one place in the list: an existing photo, or one of the
+// photos being added.
+type PhotoSlot struct {
+	ImageID  string // an existing photo, or empty for a new one
+	NewIndex int    // the entry of PhotoEdit.New, when ImageID is empty
+}
+
+// PhotoSource gives the bytes of an uploaded photo when asked, so a dozen
+// large files never have to sit in memory at once.
+type PhotoSource interface {
+	Bytes() ([]byte, error)
+}
+
+// PhotoErrorField is the ValidationError field for a problem with the new
+// photo at index i, so the caller can name the file.
+func PhotoErrorField(i int) string { return "photos." + strconv.Itoa(i) }
+
+// Validate checks that the edit is well formed: every new photo placed
+// exactly once, no photo twice, nothing both kept and removed, and no more
+// than MaxImages in the end.
+func (e PhotoEdit) Validate() error {
+	if e.AppendNew {
+		return nil
+	}
+	malformed := NewValidationError("photos", "Não consegui entender a lista de fotos. Recarregue a página e tente de novo.")
+
+	kept := map[string]bool{}
+	placed := make([]bool, len(e.New))
+	for _, s := range e.Order {
+		if s.ImageID != "" {
+			if kept[s.ImageID] {
+				return malformed
+			}
+			kept[s.ImageID] = true
+			continue
+		}
+		if s.NewIndex < 0 || s.NewIndex >= len(e.New) || placed[s.NewIndex] {
+			return malformed
+		}
+		placed[s.NewIndex] = true
+	}
+	for _, p := range placed {
+		if !p {
+			return malformed
+		}
+	}
+	for _, id := range e.Removed {
+		if kept[id] {
+			return malformed
+		}
+	}
+
+	if len(e.Order) > MaxImages {
+		return NewValidationError("photos", fmt.Sprintf(
+			"Cada peça pode ter até %d fotos. Tire %d antes de salvar.", MaxImages, len(e.Order)-MaxImages))
+	}
+	return nil
 }

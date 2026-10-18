@@ -11,7 +11,8 @@ RUN go mod download
 
 COPY . .
 
-# CGO is off while there is no libvips (see the note at the end).
+# CGO is off: photos are processed in pure Go (internal/storage), so the
+# binary is static and runs on distroless.
 # -trimpath keeps build machine paths out of the binary.
 # -s -w drop the symbol table and DWARF: a much smaller binary.
 RUN CGO_ENABLED=0 GOOS=linux go build \
@@ -31,17 +32,16 @@ EXPOSE 8080
 CMD ["/api"]
 
 # ---------------------------------------------------------------------
-# When image processing with govips lands, this image changes, because
-# libvips is a C library and needs cgo:
+# Photos are resized in pure Go and written as JPEG. Moving to libvips
+# (govips) for WebP would make files about a quarter smaller, at the cost
+# of cgo and this image:
 #
-#   build:    FROM golang:1.27-bookworm
-#             RUN apt-get update && apt-get install -y libvips-dev
+#   build:    RUN apt-get update && apt-get install -y libvips-dev
 #             RUN CGO_ENABLED=1 go build ...
 #
 #   runtime:  FROM debian:bookworm-slim   (distroless/static will not do:
 #             RUN apt-get install -y libvips42   the binary stops being static)
 #
-# That takes the image from ~20 MB to ~150 MB. The cgo-free alternative is
-# in the plan: resize with disintegration/imaging and write optimised JPEG,
-# losing ~25% compression against WebP.
+# That takes the image from ~20 MB to ~150 MB. Only the ImageProcessor
+# adapter would change.
 # ---------------------------------------------------------------------
