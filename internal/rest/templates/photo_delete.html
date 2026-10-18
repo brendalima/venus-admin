@@ -1,0 +1,17 @@
+{{define "title"}}Apagar foto{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>Apagar esta foto de “{{.Product.Name}}”?</h1>
+  <img class="photo-preview" src="{{imageURL .Photo.Key600}}" alt="Foto {{.Number}} de {{.Product.Name}}">
+  <p>{{if eq .Number 1}}Ela é a capa: a próxima foto passa a ser a capa no lugar dela. {{end}}<strong>Não dá para desfazer.</strong></p>
+  <form method="post" action="/admin/products/{{.Product.ID}}/photos/{{.Photo.ID}}/delete">
+    <div class="actions">
+      <button type="submit" class="danger">Sim, apagar a foto</button>
+      <a href="/admin/products/{{.Product.ID}}#fotos">Não, voltar</a>
+    </div>
+  </form>
+</div>
+{{end}}

@@ -73,6 +73,60 @@
 </div>
 
 {{if .ID}}
+<section class="card section" id="fotos" aria-labelledby="fotos-title">
+  <h2 id="fotos-title">Fotos</h2>
+  <p class="hint">A primeira é a capa, que aparece na lista do site. As fotos são salvas assim que você as envia, sem precisar do botão “Salvar alterações”.</p>
+  {{with .PhotoFlash}}<p class="ok" role="status">{{.}}</p>{{end}}
+  {{with .PhotoFlashError}}<p class="alert" role="alert">{{.}}</p>{{end}}
+
+  {{if .Photos}}
+  <ol class="photos">
+    {{range $i, $p := .Photos}}
+    <li class="photo">
+      <img src="{{imageURL $p.Key600}}" alt="Foto {{add $i 1}} de {{$.Form.Name}}" loading="lazy">
+      <div class="photo-actions">
+        {{if eq $i 0}}
+        <span class="cover">Capa</span>
+        {{else}}
+        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
+          <input type="hidden" name="to" value="0">
+          <button type="submit" class="secondary">Usar como capa</button>
+        </form>
+        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
+          <input type="hidden" name="to" value="{{add $i -1}}">
+          <button type="submit" class="secondary" aria-label="Passar a foto {{add $i 1}} para antes">↑ Antes</button>
+        </form>
+        {{end}}
+        {{if lt (add $i 1) (len $.Photos)}}
+        <form class="inline" method="post" action="/admin/products/{{$.ID}}/photos/{{$p.ID}}/move">
+          <input type="hidden" name="to" value="{{add $i 1}}">
+          <button type="submit" class="secondary" aria-label="Passar a foto {{add $i 1}} para depois">↓ Depois</button>
+        </form>
+        {{end}}
+        <a href="/admin/products/{{$.ID}}/photos/{{$p.ID}}/delete">Apagar</a>
+      </div>
+    </li>
+    {{end}}
+  </ol>
+  {{else}}
+  <p class="muted">Ainda sem fotos. Sem foto, a peça aparece no site com um espaço vazio.</p>
+  {{end}}
+
+  {{if lt (len .Photos) .MaxPhotos}}
+  <form method="post" action="/admin/products/{{.ID}}/photos" enctype="multipart/form-data">
+    <label for="photos">Adicionar fotos</label>
+    <input id="photos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple required
+           aria-describedby="photos-hint">
+    <p class="hint" id="photos-hint">Pode escolher várias de uma vez. Até {{.MaxPhotos}} por peça.</p>
+    <div class="actions">
+      <button type="submit">Enviar fotos</button>
+    </div>
+  </form>
+  {{else}}
+  <p class="muted">Esta peça já tem {{.MaxPhotos}} fotos, o máximo. Apague alguma para adicionar outra.</p>
+  {{end}}
+</section>
+
 <p class="actions"><a href="/admin/products/{{.ID}}/delete">Apagar esta peça</a></p>
 {{end}}
 {{end}}

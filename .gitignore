@@ -10,3 +10,6 @@
 # test coverage
 *.out
 coverage.html
+
+# photos uploaded in development (MEDIA_DIR), standing in for R2
+/.media/

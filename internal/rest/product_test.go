@@ -25,6 +25,8 @@ type mockProductService struct {
 	writeErr error // returned by Create, Update, SetSoldOut and Delete
 	created  []domain.Product
 	updated  []domain.Product
+	photoErr error // returned by AddPhoto, MovePhoto and DeletePhoto when set
+	moves    []int
 }
 
 func newMockProductService() *mockProductService {
@@ -206,7 +208,7 @@ func TestProductCreate(t *testing.T) {
 	}
 
 	res, _ := app.post(t, "/admin/products", validForm())
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/products/new-1#fotos" {
 		t.Fatalf("create: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
 	}
 
@@ -222,10 +224,10 @@ func TestProductCreate(t *testing.T) {
 	}
 
 	// The outcome is shown once, on the page the browser lands on.
-	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "“Biquíni Aurora” foi cadastrada.") {
+	if _, body := app.get(t, "/admin/products/new-1", nil); !strings.Contains(body, "“Biquíni Aurora” foi cadastrada.") {
 		t.Error("no confirmation after creating")
 	}
-	if _, body := app.get(t, "/admin", nil); strings.Contains(body, "foi cadastrada") {
+	if _, body := app.get(t, "/admin/products/new-1", nil); strings.Contains(body, "foi cadastrada") {
 		t.Error("the confirmation was shown twice")
 	}
 }

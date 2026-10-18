@@ -2,9 +2,11 @@ package rest
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -41,6 +43,34 @@ func MustNewStatic() http.Handler {
 	h, err := NewStatic()
 	if err != nil {
 		panic(fmt.Errorf("couldn't create static handler: %w", err))
+	}
+	return h
+}
+
+// NewMedia serves photos kept on local disk, standing in for the bucket in
+// development. Mount it under /media/ with the prefix stripped. Like the
+// bucket, it never lists directories.
+func NewMedia(dir string) (http.Handler, error) {
+	if dir == "" {
+		return nil, errors.New("missing media directory")
+	}
+	root := os.DirFS(dir)
+	files := http.FileServerFS(root)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info, err := fs.Stat(root, strings.TrimPrefix(r.URL.Path, "/"))
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		files.ServeHTTP(w, r)
+	}), nil
+}
+
+func MustNewMedia(dir string) http.Handler {
+	h, err := NewMedia(dir)
+	if err != nil {
+		panic(fmt.Errorf("couldn't create media handler: %w", err))
 	}
 	return h
 }

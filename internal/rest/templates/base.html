@@ -95,6 +95,29 @@
     border-radius: 1rem; background: var(--error-bg); color: var(--error-text); margin-left: .25rem;
   }
   .htmx-request button { opacity: .6; }
+  h2 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  .section { margin-top: 1.5rem; }
+  /* Photos are portrait. No width/height attributes on these images: they
+     would beat aspect-ratio, and a thumbnail would render full height. */
+  .product a { display: flex; align-items: center; gap: .75rem; }
+  .thumb {
+    flex: none; width: 3.5rem; aspect-ratio: 3 / 4; object-fit: cover;
+    border-radius: .4rem; background: var(--bg); border: 1px solid var(--border);
+  }
+  .photos { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: .75rem; }
+  .photo { display: flex; align-items: flex-start; gap: .75rem; }
+  .photo img {
+    flex: none; width: 6rem; height: auto; aspect-ratio: 3 / 4; object-fit: cover;
+    border-radius: .5rem; background: var(--bg); border: 1px solid var(--border);
+  }
+  .photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .photo-actions a { color: var(--muted); }
+  .cover {
+    font-size: .85rem; font-weight: 700; padding: .2rem .6rem; border-radius: 1rem;
+    background: var(--ok-bg); color: var(--ok-text);
+  }
+  .photo-preview { display: block; width: 100%; max-width: 16rem; height: auto; border-radius: .5rem; margin: .5rem 0 1rem; }
+  input[type=file] { display: block; width: 100%; font: inherit; padding: .5rem 0; }
 </style>
 </head>
 <body>

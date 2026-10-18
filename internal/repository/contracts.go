@@ -30,6 +30,24 @@ type ProductRepository interface {
 	MarkPublished(ctx context.Context) error
 }
 
+// ImageRepository persists the rows describing a product's photos. The
+// files themselves are in an ImageStore; the service keeps the two in step.
+type ImageRepository interface {
+	// Add places the image after the product's others, ignoring
+	// img.Position, and returns it as stored. *domain.NotFoundError means
+	// the product is gone.
+	Add(ctx context.Context, img domain.Image) (domain.Image, error)
+
+	// Delete removes one of productID's images and returns it, so the
+	// caller knows which files to remove.
+	Delete(ctx context.Context, productID, imageID string) (domain.Image, error)
+
+	// Move puts the image at index among the product's photos, 0 being
+	// the cover, shifting the others. An index past either end is taken
+	// as that end.
+	Move(ctx context.Context, productID, imageID string, index int) error
+}
+
 // UserRepository persists the people allowed into the admin. Emails
 // arrive already normalised by the service.
 type UserRepository interface {

@@ -24,9 +24,13 @@
 {{define "product-row"}}
 <li class="product" id="product-{{.ID}}">
   <a href="/admin/products/{{.ID}}">
-    <strong>{{.Name}}</strong>
-    <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}</span>
-    {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
+    {{if .Images}}{{with index .Images 0}}<img class="thumb" src="{{imageURL .Key600}}" alt="" loading="lazy">{{end}}
+    {{else}}<span class="thumb" aria-hidden="true"></span>{{end}}
+    <span>
+      <strong>{{.Name}}</strong>
+      <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}{{if not .Images}} · Sem fotos{{end}}</span>
+      {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
+    </span>
   </a>
   <form class="inline" method="post" action="/admin/products/{{.ID}}/sold-out"
         hx-post="/admin/products/{{.ID}}/sold-out" hx-target="closest li" hx-swap="outerHTML">

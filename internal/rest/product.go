@@ -22,6 +22,11 @@ const maxProductFormBytes = 64 << 10
 const (
 	sessionFlashKey      = "flash"
 	sessionFlashErrorKey = "flash_error"
+
+	// The outcome of a photo action is shown in the photos section, where
+	// the page lands (#fotos), not at the top, out of sight.
+	sessionPhotoFlashKey      = "photo_flash"
+	sessionPhotoFlashErrorKey = "photo_flash_error"
 )
 
 // adminLayout is what every logged-in page shows around its content: who
@@ -44,6 +49,13 @@ type productFormPage struct {
 	Errors map[string]string // by field
 	Alert  string            // a problem that belongs to no field
 	Sizes  []string          // every size on offer
+
+	// Photos are shown when editing, and saved on their own: they are
+	// not part of the form above.
+	Photos          []domain.Image
+	MaxPhotos       int
+	PhotoFlash      string
+	PhotoFlashError string
 }
 
 type productDeletePage struct {
@@ -184,8 +196,9 @@ func (h *Product) Create(w http.ResponseWriter, r *http.Request) {
 		h.saveFailed(w, r, productFormPage{Form: form}, err)
 		return
 	}
-	h.flash(r, sessionFlashKey, "“"+created.Name+"” foi cadastrada.")
-	seeOther(w, r, "/admin")
+	// Straight to the photos: a piece without them cannot go on the site.
+	h.flash(r, sessionPhotoFlashKey, "“"+created.Name+"” foi cadastrada. Agora adicione as fotos.")
+	seeOther(w, r, photosURL(created.ID))
 }
 
 func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +206,7 @@ func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.renderForm(w, r, http.StatusOK, productFormPage{ID: p.ID, Form: productFormFrom(p)})
+	h.renderForm(w, r, http.StatusOK, productFormPage{ID: p.ID, Form: productFormFrom(p), Photos: p.Images})
 }
 
 func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +383,19 @@ func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page pro
 func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int, page productFormPage) {
 	page.adminLayout = h.layout(r)
 	page.Sizes = domain.AllSizes()
+	page.MaxPhotos = domain.MaxImages
+	page.PhotoFlash = h.sessions.PopString(r.Context(), sessionPhotoFlashKey)
+	page.PhotoFlashError = h.sessions.PopString(r.Context(), sessionPhotoFlashErrorKey)
+	if page.ID != "" && page.Photos == nil {
+		// A rejected edit shows the form again; the photos come from the
+		// database, not from what was posted. Without them the section
+		// would look empty, so a failure here is only logged.
+		p, err := h.service.GetByID(r.Context(), page.ID)
+		if err != nil {
+			slog.WarnContext(r.Context(), "couldn't load photos for the form", "error", err)
+		}
+		page.Photos = p.Images
+	}
 	h.templates.render(w, r, status, "product_form.html", page)
 }
 

@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	testEmail    = "ana@exemplo.com"
-	testPassword = "uma senha longa"
+	testEmail        = "ana@exemplo.com"
+	testPassword     = "uma senha longa"
+	testImageBaseURL = "https://fotos.example.com"
 )
 
 type mockUserService struct {
@@ -77,7 +78,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		limiter = NewLoginLimiter(100, time.Minute)
 	}
 	service := newMockUserService()
-	templates := MustNewTemplates()
+	templates := MustNewTemplates(testImageBaseURL)
 	sessions := MustNewSessionManager(memstore.NewWithCleanupInterval(0), false)
 	auth := MustNewAuth(AuthInput{
 		Service:   service,
@@ -101,6 +102,10 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
+	app.Handle("POST /admin/products/{id}/photos", private(product.UploadPhotos))
+	app.Handle("POST /admin/products/{id}/photos/{photo}/move", private(product.MovePhoto))
+	app.Handle("GET /admin/products/{id}/photos/{photo}/delete", private(product.ConfirmDeletePhoto))
+	app.Handle("POST /admin/products/{id}/photos/{photo}/delete", private(product.DeletePhoto))
 	// Stands in for anything that stores data before login, giving the
 	// visitor a real session token to carry into it.
 	app.HandleFunc("GET /visit", func(_ http.ResponseWriter, r *http.Request) {
@@ -175,7 +180,7 @@ func TestNewAuthRejectsMissingDependencies(t *testing.T) {
 		Service:   newMockUserService(),
 		Sessions:  MustNewSessionManager(memstore.NewWithCleanupInterval(0), false),
 		Limiter:   NewLoginLimiter(1, time.Minute),
-		Templates: MustNewTemplates(),
+		Templates: MustNewTemplates(testImageBaseURL),
 	}
 	for name, in := range map[string]AuthInput{
 		"service":   {Sessions: full.Sessions, Limiter: full.Limiter, Templates: full.Templates},

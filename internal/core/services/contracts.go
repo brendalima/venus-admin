@@ -24,8 +24,8 @@ type UserService interface {
 	GetByID(ctx context.Context, id string) (domain.User, error)
 }
 
-// ProductService manages the catalogue. Photos are not handled here yet
-// (M2): writes leave a product's images as they are.
+// ProductService manages the catalogue. Create and Update leave a
+// product's photos alone; they have methods of their own.
 type ProductService interface {
 	List(ctx context.Context) ([]domain.Product, error)
 	GetByID(ctx context.Context, id string) (domain.Product, error)
@@ -41,5 +41,17 @@ type ProductService interface {
 	Update(ctx context.Context, p domain.Product) (domain.Product, error)
 
 	SetSoldOut(ctx context.Context, id string, soldOut bool) (domain.Product, error)
+
+	// Delete removes the product and its photo files.
 	Delete(ctx context.Context, id string) error
+
+	// AddPhoto resizes original, stores it and places it after the
+	// product's other photos. A file that is not a usable photo, or one
+	// photo too many, comes back as *domain.ValidationError.
+	AddPhoto(ctx context.Context, productID string, original []byte) (domain.Image, error)
+
+	// MovePhoto puts the photo at index, 0 being the cover.
+	MovePhoto(ctx context.Context, productID, imageID string, index int) error
+
+	DeletePhoto(ctx context.Context, productID, imageID string) error
 }

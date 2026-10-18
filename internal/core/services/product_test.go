@@ -106,14 +106,27 @@ var existing = domain.Product{
 }
 
 func TestNewProduct(t *testing.T) {
-	if _, err := NewProduct(nil); err == nil {
-		t.Error("a nil repository should be rejected")
+	full := ProductInput{
+		Repo: newMockProductRepository(), Images: &mockImageRepository{}, Store: newMockImageStore(), Processor: &mockProcessor{},
+	}
+	for name, in := range map[string]ProductInput{
+		"repository":       {Images: full.Images, Store: full.Store, Processor: full.Processor},
+		"image repository": {Repo: full.Repo, Store: full.Store, Processor: full.Processor},
+		"store":            {Repo: full.Repo, Images: full.Images, Processor: full.Processor},
+		"processor":        {Repo: full.Repo, Images: full.Images, Store: full.Store},
+	} {
+		if _, err := NewProduct(in); err == nil {
+			t.Errorf("missing %s was accepted", name)
+		}
+	}
+	if _, err := NewProduct(full); err != nil {
+		t.Errorf("complete input rejected: %v", err)
 	}
 }
 
 func TestProductCreate(t *testing.T) {
 	repo := newMockProductRepository()
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
 	p, err := s.Create(context.Background(), validInput())
 	if err != nil {
@@ -151,7 +164,7 @@ func TestProductCreateFailures(t *testing.T) {
 				tt.edit(&in)
 			}
 
-			_, err := MustNewProduct(repo).Create(context.Background(), in)
+			_, err := newTestProductService(repo).Create(context.Background(), in)
 
 			var v *domain.ValidationError
 			if tt.wantField == "" {
@@ -191,7 +204,7 @@ func TestProductUpdate(t *testing.T) {
 			in.Slug = tt.slug
 			in.Position = 99 // ignored
 
-			p, err := MustNewProduct(repo).Update(context.Background(), in)
+			p, err := newTestProductService(repo).Update(context.Background(), in)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -225,7 +238,7 @@ func TestProductUpdateFailures(t *testing.T) {
 			in := validInput()
 			in.ID = tt.id
 
-			_, err := MustNewProduct(repo).Update(context.Background(), in)
+			_, err := newTestProductService(repo).Update(context.Background(), in)
 
 			var v *domain.ValidationError
 			var nf *domain.NotFoundError
@@ -249,7 +262,7 @@ func TestProductUpdateFailures(t *testing.T) {
 
 func TestProductSetSoldOut(t *testing.T) {
 	repo := newMockProductRepository(existing)
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
 	p, err := s.SetSoldOut(context.Background(), existing.ID, true)
 	if err != nil || !p.SoldOut {
@@ -270,7 +283,7 @@ func TestProductSetSoldOut(t *testing.T) {
 
 func TestProductDelete(t *testing.T) {
 	repo := newMockProductRepository(existing)
-	s := MustNewProduct(repo)
+	s := newTestProductService(repo)
 
 	if err := s.Delete(context.Background(), existing.ID); err != nil {
 		t.Fatal(err)

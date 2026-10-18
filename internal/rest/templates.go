@@ -3,6 +3,7 @@ package rest
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -24,7 +25,20 @@ type Templates struct {
 	pages map[string]*template.Template
 }
 
-func NewTemplates() (*Templates, error) {
+// NewTemplates parses every page. imageBaseURL is where stored photos are
+// served from; templates turn a photo's key into its address with
+// imageURL.
+func NewTemplates(imageBaseURL string) (*Templates, error) {
+	if imageBaseURL == "" {
+		return nil, errors.New("missing image base url")
+	}
+	funcs := template.FuncMap{
+		"reais":    formatReais,
+		"join":     strings.Join,
+		"add":      func(a, b int) int { return a + b },
+		"imageURL": func(key string) string { return imageBaseURL + "/" + key },
+	}
+
 	pages, err := fs.Glob(templatesFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("couldn't list templates: %w", err)
@@ -35,7 +49,7 @@ func NewTemplates() (*Templates, error) {
 		if page == "templates/base.html" {
 			continue
 		}
-		tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(templatesFS, "templates/base.html", page)
+		tmpl, err := template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", page)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't parse %s: %w", page, err)
 		}
@@ -44,17 +58,12 @@ func NewTemplates() (*Templates, error) {
 	return t, nil
 }
 
-func MustNewTemplates() *Templates {
-	t, err := NewTemplates()
+func MustNewTemplates(imageBaseURL string) *Templates {
+	t, err := NewTemplates(imageBaseURL)
 	if err != nil {
 		panic(fmt.Errorf("couldn't load templates: %w", err))
 	}
 	return t
-}
-
-var templateFuncs = template.FuncMap{
-	"reais": formatReais,
-	"join":  strings.Join,
 }
 
 // render writes page, inside the layout, with status.

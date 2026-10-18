@@ -5,7 +5,7 @@
 {{define "content"}}
 <div class="card">
   <h1>Apagar “{{.Product.Name}}”?</h1>
-  <p>A peça sai do painel agora e do site na próxima publicação. <strong>Não dá para desfazer.</strong></p>
+  <p>A peça e as fotos dela saem do painel agora, e do site na próxima publicação. <strong>Não dá para desfazer.</strong></p>
   <p class="muted">Se ela só acabou no estoque, prefira marcá-la como esgotada.</p>
   <form method="post" action="/admin/products/{{.Product.ID}}/delete">
     <div class="actions">

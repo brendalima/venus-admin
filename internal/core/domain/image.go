@@ -11,6 +11,10 @@ import "time"
 //
 // Only the object keys are kept. Public URLs are built from the bucket's
 // base URL, which belongs to the configuration, not to each image.
+// MaxImages is how many photos a product may have. The site shows them in
+// a gallery; past a dozen nobody scrolls, and the bucket fills up.
+const MaxImages = 12
+
 type Image struct {
 	ID        string
 	ProductID string

@@ -5,6 +5,7 @@ package adapters
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,31 @@ type Config struct {
 	// front of the server: the header would then come from the client,
 	// who could change it to dodge the login rate limit.
 	ClientIPHeader string
+
+	// R2 is the bucket the photos go to. Required in production; in
+	// development, leaving it empty keeps photos in MediaDir instead,
+	// served by the API under /media.
+	R2       R2Config
+	MediaDir string
+
+	// ImageBaseURL is where the stored photos are publicly reachable,
+	// without a trailing slash: a photo's URL is this plus "/" plus its
+	// key. Keys are stored, not URLs, so moving the bucket to another
+	// domain only changes this.
+	ImageBaseURL string
+}
+
+type R2Config struct {
+	AccountID       string
+	AccessKeyID     string
+	SecretAccessKey string
+	Bucket          string
+}
+
+// Configured reports whether any R2 setting is present. Validation makes
+// sure that, if one is, all are.
+func (r R2Config) Configured() bool {
+	return r.AccountID != "" || r.AccessKeyID != "" || r.SecretAccessKey != "" || r.Bucket != ""
 }
 
 func (c Config) IsProd() bool { return c.Env == EnvProd }
@@ -50,6 +76,13 @@ func LoadConfig() (Config, error) {
 		Port:           8080,
 		DatabaseURL:    databaseURL(),
 		ClientIPHeader: strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
+		R2: R2Config{
+			AccountID:       strings.TrimSpace(os.Getenv("R2_ACCOUNT_ID")),
+			AccessKeyID:     strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID")),
+			SecretAccessKey: strings.TrimSpace(os.Getenv("R2_SECRET_ACCESS_KEY")),
+			Bucket:          strings.TrimSpace(os.Getenv("R2_BUCKET")),
+		},
+		MediaDir: strings.TrimSpace(os.Getenv("MEDIA_DIR")),
 	}
 
 	if v := strings.TrimSpace(os.Getenv("APP_ENV")); v != "" {
@@ -76,7 +109,48 @@ func LoadConfig() (Config, error) {
 		return Config{}, errors.New("missing DATABASE_URL_UNPOOLED or DATABASE_URL")
 	}
 
+	if err := loadImageStorage(&cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// loadImageStorage checks the R2 settings and works out ImageBaseURL and
+// MediaDir. Production always needs R2: the machine's disk is wiped on
+// every deploy.
+func loadImageStorage(cfg *Config) error {
+	r2 := cfg.R2
+	if cfg.IsProd() && !r2.Configured() {
+		return errors.New("missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET")
+	}
+	if r2.Configured() && (r2.AccountID == "" || r2.AccessKeyID == "" || r2.SecretAccessKey == "" || r2.Bucket == "") {
+		return errors.New("incomplete R2 settings: set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET together")
+	}
+
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("IMAGE_BASE_URL")), "/")
+	switch {
+	case base == "" && r2.Configured():
+		return errors.New("missing IMAGE_BASE_URL, the bucket's public address")
+	case base == "":
+		cfg.ImageBaseURL = "http://localhost:" + strconv.Itoa(cfg.Port) + "/media"
+	default:
+		u, err := url.Parse(base)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.RawQuery != "" {
+			return fmt.Errorf("invalid IMAGE_BASE_URL %q: use an address like https://pub-….r2.dev", base)
+		}
+		// The site is served over HTTPS; photos over HTTP would be blocked
+		// as mixed content.
+		if cfg.IsProd() && u.Scheme != "https" {
+			return fmt.Errorf("invalid IMAGE_BASE_URL %q: production needs https", base)
+		}
+		cfg.ImageBaseURL = base
+	}
+
+	if !r2.Configured() && cfg.MediaDir == "" {
+		cfg.MediaDir = ".media"
+	}
+	return nil
 }
 
 // loadDotEnv loads .env.local (written by `neon init`) and then .env, in
