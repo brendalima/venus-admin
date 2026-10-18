@@ -13,7 +13,7 @@ primary_region = 'gru'
 [env]
   APP_ENV = 'prod'
   CLIENT_IP_HEADER = 'Fly-Client-IP'
-  PUBLIC_URL = 'https://venus-admin.fly.dev'
+  PUBLIC_URL = 'https://admin.venusoasis.com.br'
   PORT = '8080'
 
 [http_service]

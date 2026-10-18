@@ -236,7 +236,7 @@ func loadPublicURL(cfg Config) (string, error) {
 
 	u, err := url.Parse(v)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Path != "" || u.RawQuery != "" {
-		return "", fmt.Errorf("invalid PUBLIC_URL %q: use the scheme and host only, like https://venus-admin.fly.dev", v)
+		return "", fmt.Errorf("invalid PUBLIC_URL %q: use the scheme and host only, like https://admin.venusoasis.com.br", v)
 	}
 	// A reset link sent over plain HTTP could be read on the way.
 	if cfg.IsProd() && u.Scheme != "https" {
