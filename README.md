@@ -53,7 +53,7 @@ make migrate
 make run
 ```
 
-Starts on `http://localhost:8080`. The API refuses to start without `DATABASE_URL_UNPOOLED` or `DATABASE_URL`.
+Starts on `http://localhost:8080`. The API refuses to start without `DATABASE_URL_UNPOOLED` or `DATABASE_URL`, and in production also without the R2 settings and `IMAGE_BASE_URL`.
 
 In development `.env.local` (written by `neon init`) is loaded automatically. A variable already exported in the shell still wins.
 
@@ -109,7 +109,11 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `POST /admin/products/{id}` | Saves the edits |
 | `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product |
-| `POST /admin/products/{id}/delete` | Deletes it |
+| `POST /admin/products/{id}/delete` | Deletes it, and its photo files |
+| `POST /admin/products/{id}/photos` | Adds photos (multipart, `photos` repeated) |
+| `POST /admin/products/{id}/photos/{photo}/move` | Moves a photo (form: `to`, the position wanted, `0` being the cover) |
+| `GET /admin/products/{id}/photos/{photo}/delete` | Asks for confirmation, showing the photo |
+| `POST /admin/products/{id}/photos/{photo}/delete` | Deletes it, and its files |
 
 Product form fields: `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), and on edit `slug`.
 
@@ -117,6 +121,18 @@ Product form fields: `name`, `price` (optional; reais as typed: `189`, `189,90`,
 - **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
 - **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
 - **Deleting** goes through a confirmation page that names the product and suggests marking it sold out instead.
+- **Creating** a product lands on its photos, the step that comes next.
+
+### Photos
+
+On the edit page, under "Fotos". Several can be sent at once, up to **12 per product**, each up to 15 MB. The first is the cover; the others are moved with "↑ Antes", "↓ Depois" and "Usar como capa".
+
+- **What comes in:** JPEG, PNG or WebP, recognised by their first bytes, not by name or declared type. Anything else is refused with a message naming the file; the others in the same upload still go in. The phone's file picker offers JPEG for HEIC photos, because the form accepts only these types.
+- **What goes out:** two JPEGs, **1200 and 600 px wide** (never enlarged), keyed `produtos/<image id>-<width>.jpg`. Re-encoding drops all metadata, **GPS included**; first it applies the EXIF orientation, so phone photos come out upright, and keeps the colour profile, so Display P3 photos keep their colours.
+- **Pure Go, no cgo:** resized by area averaging (`internal/storage/resample.go`), one photo at a time. A 12 MP photo takes ~0.3 s and ~24 MB on top of the process; `x/image/draw`'s kernels would need ~116 MB more, which the 256 MB machine does not have. JPEG instead of WebP costs ~25% in size; libvips could replace it behind `ImageProcessor` (see the end of the Dockerfile).
+- **Storage:** Cloudflare R2 in production, through its S3 API, files marked `immutable`. In development without R2, photos go to `.media/` and the API serves them under `/media/`.
+- **Deleting** a photo or a product removes the row first and the files after: a file left behind is only wasted space and is logged with its key; a row without its file would be a broken photo.
+- Uploads get 10 minutes instead of the server's 30-second read timeout, since several photos over a phone connection take longer.
 
 ## Access
 
@@ -182,6 +198,9 @@ Everything through environment variables — what Fly expects (`fly secrets`), a
 | `DATABASE_URL_UNPOOLED` | — | one of the two (preferred) |
 | `DATABASE_URL` | — | one of the two |
 | `CLIENT_IP_HEADER` | — | no; `Fly-Client-IP` on Fly (set in `fly.toml`) |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | — | in production (`fly secrets`), all four together; in development, empty keeps photos on disk |
+| `IMAGE_BASE_URL` | `http://localhost:$PORT/media` without R2 | with R2: the bucket's public address, `https` in production |
+| `MEDIA_DIR` | `.media` | development without R2 only |
 | `TEST_DATABASE_URL` | — | tests only; integration tests skip without it |
 
 New variables go into `.env-sample`.
@@ -194,6 +213,7 @@ Automatic on every merge into `master` (see Environments). One-time setup:
 
 ```bash
 fly secrets set DATABASE_URL_UNPOOLED="$(neon cs production --project-id dry-water-16084849)"
+fly secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET=… IMAGE_BASE_URL=https://…
 fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 ```
 
@@ -201,6 +221,6 @@ fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete — without photos yet.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2.
 
-Next: password reset by email.
+Next: password reset by email (branch `password-reset`), then publishing (M3).
