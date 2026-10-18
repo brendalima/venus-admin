@@ -39,3 +39,12 @@ func (e *ValidationError) Error() string { return "invalid " + e.Field }
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{Field: field, Message: message}
 }
+
+// StaleError reports a change based on data that has since changed, such
+// as saving a photo list while someone else edited it on another device.
+// Applying it anyway could delete what the person never saw.
+type StaleError struct{ msg string }
+
+func (e *StaleError) Error() string { return e.msg }
+
+func NewStaleError(msg string) *StaleError { return &StaleError{msg: msg} }

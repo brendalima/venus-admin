@@ -4,57 +4,12 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
-
-type mockImageRepository struct {
-	repo    *mockProductRepository // images live on its products
-	addErr  error
-	moveErr error
-	moved   []int
-}
-
-func (m *mockImageRepository) Add(_ context.Context, img domain.Image) (domain.Image, error) {
-	if m.addErr != nil {
-		return domain.Image{}, m.addErr
-	}
-	p, ok := m.repo.products[img.ProductID]
-	if !ok {
-		return domain.Image{}, domain.NewNotFoundError("product not found")
-	}
-	img.Position = int32(len(p.Images))
-	p.Images = append(p.Images, img)
-	m.repo.products[p.ID] = p
-	return img, nil
-}
-
-func (m *mockImageRepository) Delete(_ context.Context, productID, imageID string) (domain.Image, error) {
-	p, ok := m.repo.products[productID]
-	if !ok {
-		return domain.Image{}, domain.NewNotFoundError("image not found")
-	}
-	for i, img := range p.Images {
-		if img.ID == imageID {
-			p.Images = slices.Delete(p.Images, i, i+1)
-			m.repo.products[p.ID] = p
-			return img, nil
-		}
-	}
-	return domain.Image{}, domain.NewNotFoundError("image not found")
-}
-
-func (m *mockImageRepository) Move(_ context.Context, _, _ string, index int) error {
-	if m.moveErr != nil {
-		return m.moveErr
-	}
-	m.moved = append(m.moved, index)
-	return nil
-}
 
 type mockImageStore struct {
 	files     map[string]string // content by key
@@ -82,167 +37,304 @@ func (m *mockImageStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-type mockProcessor struct{ err error }
+// notAPhoto is what mockProcessor refuses, as the real one refuses a
+// file that is not an image.
+const notAPhoto = "not a photo"
+
+type mockProcessor struct {
+	err       error
+	processed int
+}
 
 func (m *mockProcessor) Process(_ context.Context, original []byte) ([]byte, []byte, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}
+	if string(original) == notAPhoto {
+		return nil, nil, domain.NewValidationError("photos", "Esse arquivo não é uma foto em JPEG, PNG ou WebP.")
+	}
+	m.processed++
 	return []byte("small " + string(original)), []byte("large " + string(original)), nil
 }
+
+// source is an uploaded photo whose bytes are known up front.
+type source string
+
+func (s source) Bytes() ([]byte, error) { return []byte(s), nil }
+
+type failingSource struct{}
+
+func (failingSource) Bytes() ([]byte, error) { return nil, errors.New("temporary file gone") }
 
 type photoFixture struct {
 	service   *Product
 	repo      *mockProductRepository
-	images    *mockImageRepository
 	store     *mockImageStore
 	processor *mockProcessor
 }
 
 func newPhotoFixture(ps ...domain.Product) *photoFixture {
-	repo := newMockProductRepository(ps...)
-	f := &photoFixture{
-		repo:      repo,
-		images:    &mockImageRepository{repo: repo},
-		store:     newMockImageStore(),
-		processor: &mockProcessor{},
-	}
-	f.service = MustNewProduct(ProductInput{Repo: repo, Images: f.images, Store: f.store, Processor: f.processor})
+	f := &photoFixture{repo: newMockProductRepository(ps...), store: newMockImageStore(), processor: &mockProcessor{}}
+	f.service = MustNewProduct(ProductInput{Repo: f.repo, Store: f.store, Processor: f.processor})
 	return f
 }
 
 func newTestProductService(repo *mockProductRepository) *Product {
-	return MustNewProduct(ProductInput{
-		Repo: repo, Images: &mockImageRepository{repo: repo}, Store: newMockImageStore(), Processor: &mockProcessor{},
-	})
+	return MustNewProduct(ProductInput{Repo: repo, Store: newMockImageStore(), Processor: &mockProcessor{}})
 }
 
-func TestAddPhoto(t *testing.T) {
-	f := newPhotoFixture(existing)
+// withImages is existing with stored photos a, b and c, in that order.
+func withImages(f *photoFixture) (domain.Image, domain.Image, domain.Image) {
+	p := f.repo.products[existing.ID]
+	for _, name := range []string{"a", "b", "c"} {
+		img := domain.Image{ID: uuid.New().String(), Key600: name + "-600", Key1200: name + "-1200"}
+		p.Images = append(p.Images, img)
+		f.store.files[img.Key600], f.store.files[img.Key1200] = "x", "x"
+	}
+	f.repo.products[existing.ID] = p
+	return p.Images[0], p.Images[1], p.Images[2]
+}
 
-	img, err := f.service.AddPhoto(context.Background(), existing.ID, []byte("photo"))
+func ids(images []domain.Image) []string {
+	out := make([]string, len(images))
+	for i, img := range images {
+		out[i] = img.ID
+	}
+	return out
+}
+
+func TestCreateWithPhotos(t *testing.T) {
+	f := newPhotoFixture()
+	edit := &domain.PhotoEdit{
+		Order: []domain.PhotoSlot{{NewIndex: 1}, {NewIndex: 0}},
+		New:   []domain.PhotoSource{source("one"), source("two")},
+	}
+
+	p, err := f.service.Create(context.Background(), validInput(), edit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uuid.Validate(img.ID) != nil || img.ProductID != existing.ID {
-		t.Errorf("image = %+v", img)
+	if len(p.Images) != 2 {
+		t.Fatalf("%d images, want 2", len(p.Images))
 	}
-	want := map[string]string{
-		"produtos/" + img.ID + "-600.jpg":  "image/jpeg:small photo",
-		"produtos/" + img.ID + "-1200.jpg": "image/jpeg:large photo",
+	cover := p.Images[0]
+	if f.store.files[cover.Key1200] != "image/jpeg:large two" || f.store.files[cover.Key600] != "image/jpeg:small two" {
+		t.Errorf("the cover is not the second file: %q", f.store.files[cover.Key1200])
 	}
-	if img.Key600 != "produtos/"+img.ID+"-600.jpg" || img.Key1200 != "produtos/"+img.ID+"-1200.jpg" {
-		t.Errorf("keys %q and %q", img.Key600, img.Key1200)
-	}
-	for k, v := range want {
-		if f.store.files[k] != v {
-			t.Errorf("stored %q = %q, want %q", k, f.store.files[k], v)
-		}
+	if cover.Key600 != "produtos/"+cover.ID+"-600.jpg" {
+		t.Errorf("cover key %q", cover.Key600)
 	}
 }
 
-func TestAddPhotoFailures(t *testing.T) {
-	full := existing
-	for range domain.MaxImages {
-		full.Images = append(full.Images, domain.Image{ID: uuid.New().String()})
-	}
+func TestUpdateWithPhotos(t *testing.T) {
+	f := newPhotoFixture(existing)
+	a, b, c := withImages(f)
+	in := existing
+	in.Name = "Biquíni Aurora Novo"
 
+	// c becomes the cover, b goes, a new photo goes in the middle.
+	updated, err := f.service.Update(context.Background(), in, &domain.PhotoEdit{
+		Order:   []domain.PhotoSlot{{ImageID: c.ID}, {NewIndex: 0}, {ImageID: a.ID}},
+		Removed: []string{b.ID},
+		New:     []domain.PhotoSource{source("new")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Biquíni Aurora Novo" {
+		t.Errorf("name = %q", updated.Name)
+	}
+	if got := ids(updated.Images); len(got) != 3 || got[0] != c.ID || got[2] != a.ID {
+		t.Errorf("order %v, want [c new a]", got)
+	}
+	if _, ok := f.store.files[b.Key600]; ok {
+		t.Error("the removed photo's files are still stored")
+	}
+	if f.store.files[updated.Images[1].Key1200] != "image/jpeg:large new" {
+		t.Error("the new photo was not stored")
+	}
+}
+
+func TestUpdateAppendsWithoutJavaScript(t *testing.T) {
+	f := newPhotoFixture(existing)
+	a, b, c := withImages(f)
+
+	updated, err := f.service.Update(context.Background(), existing, &domain.PhotoEdit{
+		AppendNew: true,
+		New:       []domain.PhotoSource{source("new")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(updated.Images); len(got) != 4 || !slices.Equal(got[:3], []string{a.ID, b.ID, c.ID}) {
+		t.Errorf("order %v, want a, b, c and the new one last", got)
+	}
+}
+
+func TestUpdateWithoutPhotosLeavesThem(t *testing.T) {
+	f := newPhotoFixture(existing)
+	a, b, c := withImages(f)
+
+	updated, err := f.service.Update(context.Background(), existing, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(updated.Images); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
+		t.Errorf("order %v, want them untouched", got)
+	}
+}
+
+func TestPhotoEditNothingSaved(t *testing.T) {
+	type edit func(a, b, c domain.Image) *domain.PhotoEdit
+	keepAll := func(a, b, c domain.Image) []domain.PhotoSlot {
+		return []domain.PhotoSlot{{ImageID: a.ID}, {ImageID: b.ID}, {ImageID: c.ID}}
+	}
 	tests := []struct {
-		name         string
-		product      domain.Product
-		productID    string
-		processErr   error
-		putErrAt     int
-		addErr       error
-		wantField    string
-		wantNotFound bool
+		name          string
+		input         func(domain.Product) domain.Product
+		edit          edit
+		putErrAt      int
+		repoErr       error
+		wantFields    []string // validation errors expected, by field
+		wantStale     bool
+		wantProcessed int // photos processed before giving up
 	}{
-		{name: "unknown product", product: existing, productID: uuid.New().String(), wantNotFound: true},
-		{name: "photo limit", product: full, productID: existing.ID, wantField: "photos"},
 		{
-			name: "not a photo", product: existing, productID: existing.ID,
-			processErr: domain.NewValidationError("photos", "Esse arquivo não é uma foto"), wantField: "photos",
+			name: "a new photo is not a photo",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{
+					Order: append(keepAll(a, b, c), domain.PhotoSlot{NewIndex: 0}, domain.PhotoSlot{NewIndex: 1}),
+					New:   []domain.PhotoSource{source("good"), source(notAPhoto)},
+				}
+			},
+			wantFields: []string{domain.PhotoErrorField(1)}, wantProcessed: 1,
 		},
-		{name: "first upload fails", product: existing, productID: existing.ID, putErrAt: 1},
-		{name: "second upload fails", product: existing, productID: existing.ID, putErrAt: 2},
-		{name: "database fails", product: existing, productID: existing.ID, addErr: errors.New("connection refused")},
 		{
-			name: "product deleted meanwhile", product: existing, productID: existing.ID,
-			addErr: domain.NewNotFoundError("product not found"), wantNotFound: true,
+			// Both problems at once: a single save says everything to fix.
+			name:  "bad name and bad photo",
+			input: func(p domain.Product) domain.Product { p.Name = ""; return p },
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{
+					Order: append(keepAll(a, b, c), domain.PhotoSlot{NewIndex: 0}),
+					New:   []domain.PhotoSource{source(notAPhoto)},
+				}
+			},
+			wantFields: []string{"name", domain.PhotoErrorField(0)},
+		},
+		{
+			name: "a photo added elsewhere",
+			edit: func(a, _, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{Order: []domain.PhotoSlot{{ImageID: a.ID}, {ImageID: c.ID}}}
+			},
+			wantStale: true,
+		},
+		{
+			name: "a photo deleted elsewhere",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{Order: append(keepAll(a, b, c), domain.PhotoSlot{ImageID: uuid.New().String()})}
+			},
+			wantStale: true,
+		},
+		{
+			name: "too many photos",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				e := &domain.PhotoEdit{Order: keepAll(a, b, c)}
+				for i := range domain.MaxImages {
+					e.New = append(e.New, source("p"))
+					e.Order = append(e.Order, domain.PhotoSlot{NewIndex: i})
+				}
+				return e
+			},
+			wantFields: []string{"photos"},
+		},
+		{
+			name: "storage fails midway",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{
+					Order: append(keepAll(a, b, c), domain.PhotoSlot{NewIndex: 0}, domain.PhotoSlot{NewIndex: 1}),
+					New:   []domain.PhotoSource{source("one"), source("two")},
+				}
+			},
+			putErrAt: 3, wantProcessed: 2,
+		},
+		{
+			name: "database fails",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{Order: append(keepAll(a, b, c), domain.PhotoSlot{NewIndex: 0}), New: []domain.PhotoSource{source("one")}}
+			},
+			repoErr: errors.New("connection refused"), wantProcessed: 1,
+		},
+		{
+			name: "upload unreadable",
+			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
+				return &domain.PhotoEdit{Order: append(keepAll(a, b, c), domain.PhotoSlot{NewIndex: 0}), New: []domain.PhotoSource{failingSource{}}}
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newPhotoFixture(tt.product)
-			f.processor.err, f.store.putErrAt, f.images.addErr = tt.processErr, tt.putErrAt, tt.addErr
+			f := newPhotoFixture(existing)
+			a, b, c := withImages(f)
+			f.store.putErrAt, f.repo.writeErr = tt.putErrAt, tt.repoErr
+			files := len(f.store.files)
+			in := existing
+			if tt.input != nil {
+				in = tt.input(in)
+			}
 
-			_, err := f.service.AddPhoto(context.Background(), tt.productID, []byte("photo"))
+			_, err := f.service.Update(context.Background(), in, tt.edit(a, b, c))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			var v *domain.ValidationError
-			if tt.wantField != "" && (!errors.As(err, &v) || v.Field != tt.wantField) {
-				t.Errorf("err = %v, want a ValidationError on %s", err, tt.wantField)
+
+			got := map[string]bool{}
+			var walk func(error)
+			walk = func(err error) {
+				var joined interface{ Unwrap() []error }
+				if errors.As(err, &joined) {
+					for _, e := range joined.Unwrap() {
+						walk(e)
+					}
+					return
+				}
+				var v *domain.ValidationError
+				if errors.As(err, &v) {
+					got[v.Field] = true
+				}
 			}
-			var nf *domain.NotFoundError
-			if tt.wantNotFound != errors.As(err, &nf) {
-				t.Errorf("err = %v, want NotFoundError: %v", err, tt.wantNotFound)
+			walk(err)
+			for _, field := range tt.wantFields {
+				if !got[field] {
+					t.Errorf("no validation error on %s in %v", field, err)
+				}
 			}
-			if len(f.store.files) != 0 {
-				t.Errorf("files left behind: %v", f.store.files)
+			var stale *domain.StaleError
+			if tt.wantStale != errors.As(err, &stale) {
+				t.Errorf("err = %v, want StaleError: %v", err, tt.wantStale)
+			}
+			if f.processor.processed != tt.wantProcessed {
+				t.Errorf("%d photos processed, want %d", f.processor.processed, tt.wantProcessed)
+			}
+
+			// Nothing saved: the product, its photos and the bucket are as
+			// they were.
+			if f.repo.writes != 0 && tt.repoErr == nil {
+				t.Errorf("%d writes reached the repository", f.repo.writes)
+			}
+			if got := ids(f.repo.products[existing.ID].Images); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
+				t.Errorf("photos %v, want them untouched", got)
+			}
+			if len(f.store.files) != files {
+				t.Errorf("%d files stored, want the original %d", len(f.store.files), files)
 			}
 		})
 	}
 }
 
-func TestDeletePhoto(t *testing.T) {
-	f := newPhotoFixture(existing)
-	img, err := f.service.AddPhoto(context.Background(), existing.ID, []byte("photo"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A storage failure does not undo the deletion the person asked for.
-	f.store.deleteErr = errors.New("r2 unreachable")
-	if err := f.service.DeletePhoto(context.Background(), existing.ID, img.ID); err != nil {
-		t.Fatalf("delete with storage down: %v", err)
-	}
-	if len(f.repo.products[existing.ID].Images) != 0 {
-		t.Error("the photo is still on the product")
-	}
-
-	var nf *domain.NotFoundError
-	if err := f.service.DeletePhoto(context.Background(), existing.ID, img.ID); !errors.As(err, &nf) {
-		t.Errorf("deleting twice: err = %v, want NotFoundError", err)
-	}
-}
-
-func TestDeletePhotoRemovesFiles(t *testing.T) {
-	f := newPhotoFixture(existing)
-	img, err := f.service.AddPhoto(context.Background(), existing.ID, []byte("photo"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.DeletePhoto(context.Background(), existing.ID, img.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.store.files) != 0 {
-		t.Errorf("files left behind: %v", f.store.files)
-	}
-}
-
 func TestProductDeleteRemovesPhotoFiles(t *testing.T) {
 	f := newPhotoFixture(existing)
-	for range 2 {
-		if _, err := f.service.AddPhoto(context.Background(), existing.ID, []byte("photo")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(f.store.files) != 4 {
-		t.Fatalf("%d files stored, want 4", len(f.store.files))
-	}
-
+	withImages(f)
 	if err := f.service.Delete(context.Background(), existing.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -251,19 +343,19 @@ func TestProductDeleteRemovesPhotoFiles(t *testing.T) {
 	}
 }
 
-func TestMovePhoto(t *testing.T) {
+func TestRemovedPhotoFilesFailingToDeleteDoNotFailTheSave(t *testing.T) {
 	f := newPhotoFixture(existing)
-	if err := f.service.MovePhoto(context.Background(), existing.ID, uuid.New().String(), 0); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(f.images.moved, []int{0}) {
-		t.Errorf("moved to %v, want [0]", f.images.moved)
-	}
+	a, b, c := withImages(f)
+	f.store.deleteErr = errors.New("r2 unreachable")
 
-	f.images.moveErr = domain.NewNotFoundError("image not found")
-	var nf *domain.NotFoundError
-	err := f.service.MovePhoto(context.Background(), existing.ID, "x", 1)
-	if !errors.As(err, &nf) || !strings.Contains(err.Error(), "couldn't move photo") {
-		t.Errorf("err = %v, want a wrapped NotFoundError", err)
+	updated, err := f.service.Update(context.Background(), existing, &domain.PhotoEdit{
+		Order:   []domain.PhotoSlot{{ImageID: a.ID}, {ImageID: c.ID}},
+		Removed: []string{b.ID},
+	})
+	if err != nil {
+		t.Fatalf("the save failed because of an orphan file: %v", err)
+	}
+	if got := ids(updated.Images); !slices.Equal(got, []string{a.ID, c.ID}) {
+		t.Errorf("order %v, want [a c]", got)
 	}
 }
