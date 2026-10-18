@@ -35,6 +35,10 @@ type adminLayout struct {
 type productListPage struct {
 	adminLayout
 	Products []domain.Product
+	Site     domain.SiteStatus
+	// SiteUnknown is set when the site's status could not be read. The
+	// list still shows, and so does the button.
+	SiteUnknown bool
 }
 
 type productFormPage struct {
@@ -124,6 +128,7 @@ func (f productForm) product() (domain.Product, error) {
 
 type ProductInput struct {
 	Service   services.ProductService
+	Site      services.SiteService
 	Sessions  *scs.SessionManager
 	Templates *Templates
 }
@@ -132,6 +137,7 @@ type ProductInput struct {
 // Auth.RequireLogin.
 type Product struct {
 	service   services.ProductService
+	site      services.SiteService
 	sessions  *scs.SessionManager
 	templates *Templates
 }
@@ -140,12 +146,14 @@ func NewProduct(in ProductInput) (*Product, error) {
 	switch {
 	case in.Service == nil:
 		return nil, errors.New("missing product service dependency")
+	case in.Site == nil:
+		return nil, errors.New("missing site service dependency")
 	case in.Sessions == nil:
 		return nil, errors.New("missing session manager dependency")
 	case in.Templates == nil:
 		return nil, errors.New("missing templates dependency")
 	}
-	return &Product{service: in.Service, sessions: in.Sessions, templates: in.Templates}, nil
+	return &Product{service: in.Service, site: in.Site, sessions: in.Sessions, templates: in.Templates}, nil
 }
 
 func MustNewProduct(in ProductInput) *Product {
@@ -165,10 +173,13 @@ func (h *Product) List(w http.ResponseWriter, r *http.Request) {
 			"Não consegui carregar as peças", "Tente de novo em instantes.")
 		return
 	}
-	h.templates.render(w, r, http.StatusOK, "products.html", productListPage{
-		adminLayout: h.layout(r),
-		Products:    products,
-	})
+	page := productListPage{adminLayout: h.layout(r), Products: products}
+	if page.Site, err = h.site.Status(ctx); err != nil {
+		slog.ErrorContext(ctx, "couldn't read site status", "error", err)
+		page.SiteUnknown = true
+		page.Site.CanPublish = true
+	}
+	h.templates.render(w, r, http.StatusOK, "products.html", page)
 }
 
 func (h *Product) New(w http.ResponseWriter, r *http.Request) {

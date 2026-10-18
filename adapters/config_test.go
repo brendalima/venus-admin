@@ -5,7 +5,8 @@ import "testing"
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 	for _, k := range []string{"APP_ENV", "PORT", "DATABASE_URL", "DATABASE_URL_UNPOOLED", "CLIENT_IP_HEADER",
-		"R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "IMAGE_BASE_URL", "MEDIA_DIR"} {
+		"R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "IMAGE_BASE_URL", "MEDIA_DIR",
+		"DEPLOY_HOOK_URL", "API_TOKEN"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -27,6 +28,18 @@ func withR2(env map[string]string) map[string]string {
 	return env
 }
 
+// testToken is long enough to pass validation.
+const testToken = "0123456789abcdef0123456789abcdef"
+
+// prod adds what production requires besides R2.
+func prod(env map[string]string) map[string]string {
+	env["APP_ENV"] = "prod"
+	if _, set := env["API_TOKEN"]; !set {
+		env["API_TOKEN"] = testToken
+	}
+	return withR2(env)
+}
+
 var testR2 = R2Config{AccountID: "acc", AccessKeyID: "id", SecretAccessKey: "secret", Bucket: "fotos"}
 
 func TestLoadConfig(t *testing.T) {
@@ -46,15 +59,14 @@ func TestLoadConfig(t *testing.T) {
 		{
 			// The direct connection must win: see the note on databaseURL.
 			name: "direct connection is preferred",
-			env: withR2(map[string]string{
-				"APP_ENV":               "prod",
+			env: prod(map[string]string{
 				"PORT":                  "9000",
 				"DATABASE_URL":          "postgres://pooled/db",
 				"DATABASE_URL_UNPOOLED": "postgres://direct/db",
 			}),
 			want: Config{
 				Env: EnvProd, Port: 9000, DatabaseURL: "postgres://direct/db",
-				R2: testR2, ImageBaseURL: "https://pub-x.r2.dev",
+				R2: testR2, ImageBaseURL: "https://pub-x.r2.dev", APIToken: testToken,
 			},
 		},
 		{
@@ -72,12 +84,35 @@ func TestLoadConfig(t *testing.T) {
 			env:  map[string]string{"DATABASE_URL": "x", "PORT": "3000", "MEDIA_DIR": "/tmp/fotos"},
 			want: Config{Env: EnvDev, Port: 3000, DatabaseURL: "x", ImageBaseURL: "http://localhost:3000/media", MediaDir: "/tmp/fotos"},
 		},
-		{name: "production without R2", env: map[string]string{"APP_ENV": "prod", "DATABASE_URL": "x"}, wantErr: true},
+		{name: "production without R2", env: map[string]string{"APP_ENV": "prod", "DATABASE_URL": "x", "API_TOKEN": testToken}, wantErr: true},
+		{
+			name: "production with the deploy hook",
+			env:  prod(map[string]string{"DATABASE_URL": "x", "DEPLOY_HOOK_URL": " https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/abc "}),
+			want: Config{
+				Env: EnvProd, Port: 8080, DatabaseURL: "x", R2: testR2, ImageBaseURL: "https://pub-x.r2.dev", APIToken: testToken,
+				DeployHookURL: "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/abc",
+			},
+		},
+		{name: "production without the api token", env: prod(map[string]string{"DATABASE_URL": "x", "API_TOKEN": ""}), wantErr: true},
+		{name: "api token too short", env: map[string]string{"DATABASE_URL": "x", "API_TOKEN": "secret"}, wantErr: true},
+		{
+			name: "development with the api token",
+			env:  map[string]string{"DATABASE_URL": "x", "API_TOKEN": testToken},
+			want: Config{Env: EnvDev, Port: 8080, DatabaseURL: "x", ImageBaseURL: devBase, MediaDir: devDir, APIToken: testToken},
+		},
+		{
+			name: "development hook over plain HTTP",
+			env:  map[string]string{"DATABASE_URL": "x", "DEPLOY_HOOK_URL": "http://localhost:9999/hook"},
+			want: Config{Env: EnvDev, Port: 8080, DatabaseURL: "x", ImageBaseURL: devBase, MediaDir: devDir, DeployHookURL: "http://localhost:9999/hook"},
+		},
+		{name: "production hook over plain HTTP", env: prod(map[string]string{"DATABASE_URL": "x", "DEPLOY_HOOK_URL": "http://api.cloudflare.com/hook"}), wantErr: true},
+		{name: "deploy hook with another scheme", env: map[string]string{"DATABASE_URL": "x", "DEPLOY_HOOK_URL": "ftp://api.cloudflare.com/hook"}, wantErr: true},
+		{name: "deploy hook without scheme", env: map[string]string{"DATABASE_URL": "x", "DEPLOY_HOOK_URL": "api.cloudflare.com/hook"}, wantErr: true},
 		{name: "incomplete R2", env: withR2(map[string]string{"DATABASE_URL": "x", "R2_BUCKET": ""}), wantErr: true},
 		{name: "R2 without its address", env: withR2(map[string]string{"DATABASE_URL": "x", "IMAGE_BASE_URL": ""}), wantErr: true},
 		{
 			name:    "production photos over plain HTTP",
-			env:     withR2(map[string]string{"APP_ENV": "prod", "DATABASE_URL": "x", "IMAGE_BASE_URL": "http://pub-x.r2.dev"}),
+			env:     prod(map[string]string{"DATABASE_URL": "x", "IMAGE_BASE_URL": "http://pub-x.r2.dev"}),
 			wantErr: true,
 		},
 		{name: "image address without scheme", env: map[string]string{"DATABASE_URL": "x", "IMAGE_BASE_URL": "pub-x.r2.dev"}, wantErr: true},

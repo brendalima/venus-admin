@@ -45,7 +45,21 @@ type Config struct {
 	// key. Keys are stored, not URLs, so moving the bucket to another
 	// domain only changes this.
 	ImageBaseURL string
+
+	// DeployHookURL is the Cloudflare Pages deploy hook that rebuilds the
+	// site. Optional while the site has no Pages project: without it,
+	// production does not offer publishing, and development only logs.
+	DeployHookURL string
+
+	// APIToken is what the site's build sends to read /api/products.
+	// Required in production; in development, leaving it empty keeps
+	// the API off.
+	APIToken string
 }
+
+// minAPITokenLength keeps the token out of guessing range. 32 characters
+// is what `openssl rand -hex 16` prints.
+const minAPITokenLength = 32
 
 type R2Config struct {
 	AccountID       string
@@ -82,7 +96,9 @@ func LoadConfig() (Config, error) {
 			SecretAccessKey: strings.TrimSpace(os.Getenv("R2_SECRET_ACCESS_KEY")),
 			Bucket:          strings.TrimSpace(os.Getenv("R2_BUCKET")),
 		},
-		MediaDir: strings.TrimSpace(os.Getenv("MEDIA_DIR")),
+		MediaDir:      strings.TrimSpace(os.Getenv("MEDIA_DIR")),
+		DeployHookURL: strings.TrimSpace(os.Getenv("DEPLOY_HOOK_URL")),
+		APIToken:      strings.TrimSpace(os.Getenv("API_TOKEN")),
 	}
 
 	if v := strings.TrimSpace(os.Getenv("APP_ENV")); v != "" {
@@ -113,7 +129,33 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
+	if err := validatePublishing(cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// validatePublishing checks the two ends of publishing: the hook that
+// starts the site's build, and the token the build reads the API with.
+func validatePublishing(cfg Config) error {
+	if cfg.DeployHookURL != "" {
+		// Plain HTTP is allowed in development, for a stand-in hook on
+		// this machine.
+		u, err := url.Parse(cfg.DeployHookURL)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && (cfg.IsProd() || u.Scheme != "http")) {
+			// The URL itself is a secret, so it is not repeated here.
+			return errors.New("invalid DEPLOY_HOOK_URL: use the https address Cloudflare Pages gives the hook")
+		}
+	}
+
+	switch {
+	case cfg.APIToken == "" && cfg.IsProd():
+		return errors.New("missing API_TOKEN, which the site's build uses to read /api/products")
+	case cfg.APIToken != "" && len(cfg.APIToken) < minAPITokenLength:
+		return fmt.Errorf("API_TOKEN too short: use at least %d characters, such as the output of openssl rand -hex 16", minAPITokenLength)
+	}
+	return nil
 }
 
 // loadImageStorage checks the R2 settings and works out ImageBaseURL and

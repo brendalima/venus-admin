@@ -4,6 +4,7 @@
 
 {{define "content"}}
 {{template "flash" .}}
+{{template "publish-bar" .}}
 <div class="title-row">
   <h1>Peças</h1>
   <a class="button" href="/admin/products/new">Nova peça</a>
@@ -43,4 +44,23 @@
     {{end}}
   </form>
 </li>
+{{end}}
+
+{{define "publish-bar"}}
+<section class="publish{{if or .Site.Pending .SiteUnknown}} pending-changes{{end}}" aria-label="Publicação no site">
+  {{if .SiteUnknown}}
+  <p>Não consegui conferir se há alterações para publicar.</p>
+  {{else if .Site.Pending}}
+  <p><strong>Há alterações não publicadas.</strong> O site ainda mostra a versão anterior.</p>
+  {{else}}
+  <p>O site está em dia com as peças.</p>
+  {{end}}
+  {{if .Site.CanPublish}}
+  <form class="inline" method="post" action="/admin/publish">
+    <button type="submit"{{if not (or .Site.Pending .SiteUnknown)}} class="secondary"{{end}}>Publicar alterações</button>
+  </form>
+  {{else}}
+  <p class="hint">A publicação no site ainda não foi ligada. O que você salvar fica guardado e vai para o site quando ela for ligada.</p>
+  {{end}}
+</section>
 {{end}}
