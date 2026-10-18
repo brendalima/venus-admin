@@ -50,3 +50,14 @@ type ProductService interface {
 	// Delete removes the product and its photo files.
 	Delete(ctx context.Context, id string) error
 }
+
+// SiteService publishes the catalogue to the public site, which is static
+// and rebuilt from /api/products on each publish.
+type SiteService interface {
+	Status(ctx context.Context) (domain.SiteStatus, error)
+
+	// Publish starts a rebuild of the site and records the catalogue as
+	// published. It does not wait for the build: if the build fails, the
+	// changes show as pending again on the next look, never as published.
+	Publish(ctx context.Context) error
+}
