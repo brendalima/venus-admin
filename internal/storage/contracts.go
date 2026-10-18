@@ -1,5 +1,5 @@
-// Package storage holds the adapters for services outside the database.
-// None is implemented yet: the contracts describe the milestones ahead.
+// Package storage holds the adapters for services outside the database,
+// and the image processing that prepares photos for them.
 package storage
 
 import "context"
@@ -16,8 +16,11 @@ type ImageStore interface {
 //
 // Re-encoding is not only about file size: it strips EXIF, which on
 // product photos routinely carries the GPS coordinates of the shoot.
+//
+// A file that is not a usable photo comes back as *domain.ValidationError,
+// with a message for the person who uploaded it.
 type ImageProcessor interface {
-	Process(original []byte) (small, large []byte, err error)
+	Process(ctx context.Context, original []byte) (small, large []byte, err error)
 }
 
 // SitePublisher triggers a rebuild of the static site (Cloudflare Pages
