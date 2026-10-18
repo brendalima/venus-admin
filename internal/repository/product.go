@@ -12,7 +12,10 @@ import (
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
 
-var _ ProductRepository = (*Product)(nil)
+var (
+	_ ProductRepository = (*Product)(nil)
+	_ SiteRepository    = (*Product)(nil)
+)
 
 const (
 	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, created_at, updated_at`

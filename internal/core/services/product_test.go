@@ -101,14 +101,6 @@ func (m *mockProductRepository) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockProductRepository) HasUnpublishedChanges(context.Context) (bool, error) {
-	return false, errors.New("not used by the service")
-}
-
-func (m *mockProductRepository) MarkPublished(context.Context) error {
-	return errors.New("not used by the service")
-}
-
 func validInput() domain.Product {
 	return domain.Product{
 		Name:       " Biquíni Aurora ",

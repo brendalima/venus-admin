@@ -34,7 +34,12 @@ type ProductRepository interface {
 	// nothing is saved and *domain.StaleError comes back.
 	UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error)
 	Delete(ctx context.Context, id string) error
+}
 
+// SiteRepository records what the public site was last built from. The
+// product repository implements it: the state lives next to the products
+// and their triggers keep it current.
+type SiteRepository interface {
 	// HasUnpublishedChanges reports whether the catalogue changed after
 	// the last publish, which is what drives the "pending changes" badge.
 	HasUnpublishedChanges(ctx context.Context) (bool, error)
