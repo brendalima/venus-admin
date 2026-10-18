@@ -63,6 +63,7 @@ func run() error {
 		Store:     imageStore,
 		Processor: storage.NewJPEGProcessor(),
 	})
+	siteService := newSiteService(cfg, logger, pRepository)
 
 	templates := rest.MustNewTemplates(cfg.ImageBaseURL)
 	sessions := rest.MustNewSessionManager(sRepository, cfg.IsProd())
@@ -78,6 +79,7 @@ func run() error {
 	})
 	rProduct := rest.MustNewProduct(rest.ProductInput{
 		Service:   pService,
+		Site:      siteService,
 		Sessions:  sessions,
 		Templates: templates,
 	})
@@ -99,11 +101,19 @@ func run() error {
 	app.Handle("POST /admin/products/{id}/sold-out", private(rProduct.SetSoldOut))
 	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))
+	app.Handle("POST /admin/publish", private(rProduct.Publish))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", rHealth.Live)
 	mux.HandleFunc("GET /readyz", rHealth.Ready)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", rest.MustNewStatic()))
+	// The site's build reads the catalogue with a token, not a session.
+	if cfg.APIToken != "" {
+		rAPI := rest.MustNewAPI(rest.APIInput{Service: pService, Token: cfg.APIToken, ImageBaseURL: cfg.ImageBaseURL})
+		mux.Handle("GET /api/products", rAPI.RequireToken(http.HandlerFunc(rAPI.Products)))
+	} else {
+		logger.Warn("no API_TOKEN: /api/products is off")
+	}
 	if cfg.MediaDir != "" {
 		mux.Handle("GET /media/", http.StripPrefix("/media/", rest.MustNewMedia(cfg.MediaDir)))
 	}
@@ -131,6 +141,25 @@ func newImageStore(cfg adapters.Config, logger *slog.Logger) storage.ImageStore 
 		AccessKeyID:     cfg.R2.AccessKeyID,
 		SecretAccessKey: cfg.R2.SecretAccessKey,
 		Bucket:          cfg.R2.Bucket,
+	})
+}
+
+// newSiteService publishes through the deploy hook when it is configured.
+// Without it, development logs instead, and production does not offer
+// publishing at all: the button would promise an update that never comes.
+func newSiteService(cfg adapters.Config, logger *slog.Logger, repo repository.SiteRepository) *services.Site {
+	if cfg.DeployHookURL != "" {
+		return services.MustNewSite(services.SiteInput{
+			Repo:       repo,
+			Publisher:  storage.MustNewDeployHook(cfg.DeployHookURL, nil),
+			CanPublish: true,
+		})
+	}
+	logger.Warn("no DEPLOY_HOOK_URL: publishing does not reach the site")
+	return services.MustNewSite(services.SiteInput{
+		Repo:       repo,
+		Publisher:  storage.LogPublisher{},
+		CanPublish: !cfg.IsProd(),
 	})
 }
 

@@ -123,6 +123,13 @@
   .pending {
     background: #fff4d6; color: #6b4e00; border-radius: .5rem; padding: .75rem 1rem; margin: 1rem 0 0;
   }
+  .publish {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: .75rem;
+    padding: 1rem; margin-bottom: 1.5rem;
+  }
+  .publish p { margin: 0; flex: 1 1 14rem; }
+  .publish.pending-changes { background: #fff4d6; color: #6b4e00; border-color: transparent; }
   .alert ul { margin: .25rem 0 0; padding-left: 1.25rem; }
   .alert p { margin: 0; }
   .upload { margin-top: 1.25rem; }

@@ -110,6 +110,7 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product |
 | `POST /admin/products/{id}/delete` | Deletes it, and its photo files |
+| `POST /admin/publish` | Starts the site's rebuild (below) |
 
 Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the photos: `photos` (files), `photo_order` (the final order, cover first: `id:<image id>` for a photo the product has, `new:<n>` for the nth file) and `photo_remove` (repeated, photos to delete). Without `photo_order`, as from a browser without JavaScript, the files go after the existing photos.
 
@@ -133,6 +134,49 @@ In the product form, under "Fotos", up to **12 per product**, each up to 15 MB. 
 - **Deleting** a photo or a product removes the row first and the files after: a file left behind is only wasted space and is logged with its key; a row without its file would be a broken photo.
 - Saving a product gets 10 minutes instead of the server's 30-second read timeout, since several photos over a phone connection take longer.
 - `photos.js` is served at `/static/photos.js?v=<hash of its content>`, so browsers can cache it for good and still get a new version as soon as it changes.
+
+### Publishing
+
+Saving changes the catalogue here, not the site. The site is static and only picks the changes up when someone publishes:
+
+1. The list shows **"Há alterações não publicadas"** whenever the catalogue changed after the last publish. Triggers move `site_state.last_changed_at` on every product and photo change (migration `00003`).
+2. **"Publicar alterações"** is always on the list: highlighted while there are changes, plain otherwise. It calls the Cloudflare Pages deploy hook, then records the publish.
+3. The answer: *"Publicação iniciada — o site atualiza em cerca de 1 minuto."* The build is not followed. If it fails, the badge stays on, which is the signal to try again.
+
+The hook is called before the publish is recorded. If recording fails after a successful call, the badge stays on and the next try builds once more, which is harmless. The other order could mark a catalogue as published when the site never got it.
+
+Without `DEPLOY_HOOK_URL` there is nothing to rebuild. Development then only logs, while production shows the badge and says publishing is not set up yet, with no button.
+
+### The site's API
+
+`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
+
+```bash
+curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
+# 200
+# [
+#   {
+#     "id": "8a0e2f9e-4a8b-4c55-9d4c-6f1b7b0f2a11",
+#     "slug": "biquini-aurora",
+#     "name": "Biquíni Aurora",
+#     "price_cents": 18990,
+#     "sizes": ["P", "M"],
+#     "images": [
+#       {"url_600": "https://…/produtos/<image id>-600.jpg", "url_1200": "https://…/produtos/<image id>-1200.jpg"}
+#     ],
+#     "description": "Triângulo verde",
+#     "details": ["Forro duplo"],
+#     "sold_out": false
+#   }
+# ]
+
+curl -s localhost:8080/api/products
+# 401 {"error":"missing or invalid token"}
+```
+
+- A product without a price has **no `price_cents`**, so the site cannot show it as R$ 0,00. An empty `description` or `details` is left out too.
+- `images` is always present, possibly empty, cover first.
+- `Cache-Control: no-store`. In development without `API_TOKEN`, the route is off.
 
 ## Access
 
@@ -210,6 +254,8 @@ Everything through environment variables — what Fly expects (`fly secrets`), a
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | — | in production (`fly secrets`), all four together; in development, empty keeps photos on disk |
 | `IMAGE_BASE_URL` | `http://localhost:$PORT/media` without R2 | with R2: the bucket's public address, `https` in production |
 | `MEDIA_DIR` | `.media` | development without R2 only |
+| `DEPLOY_HOOK_URL` | — | no; without it production does not offer publishing. A secret; `https` in production |
+| `API_TOKEN` | — | in production, at least 32 characters (`openssl rand -hex 16`); in development, empty turns `/api/products` off |
 | `TEST_DATABASE_URL` | — | tests only; integration tests skip without it |
 
 New variables go into `.env-sample`.
@@ -223,6 +269,8 @@ Automatic on every merge into `master` (see Environments). One-time setup:
 ```bash
 fly secrets set DATABASE_URL_UNPOOLED="$(neon cs production --project-id dry-water-16084849)"
 fly secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET=… IMAGE_BASE_URL=https://…
+fly secrets set API_TOKEN="$(openssl rand -hex 16)"   # the site's build needs the same value
+fly secrets set DEPLOY_HOOK_URL=https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/…   # once the site is on Pages
 fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 ```
 
@@ -230,6 +278,6 @@ fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2. Publishing: the pending-changes badge, the publish button and `/api/products`, with the deploy hook waiting for the site's Pages project.
 
-Next: password reset by email (branch `password-reset`), then publishing (M3).
+Next: password reset by email (branch `password-reset`), then the site's build reading `/api/products` (M4).

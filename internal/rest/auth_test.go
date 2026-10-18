@@ -22,6 +22,7 @@ const (
 	testEmail        = "ana@exemplo.com"
 	testPassword     = "uma senha longa"
 	testImageBaseURL = "https://fotos.example.com"
+	testAPIToken     = "build-token-for-tests"
 )
 
 type mockUserService struct {
@@ -68,6 +69,7 @@ type testApp struct {
 	client   *http.Client
 	service  *mockUserService
 	products *mockProductService
+	site     *mockSiteService
 }
 
 func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
@@ -87,7 +89,9 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		Templates: templates,
 	})
 	products := newMockProductService()
-	product := MustNewProduct(ProductInput{Service: products, Sessions: sessions, Templates: templates})
+	site := &mockSiteService{status: domain.SiteStatus{CanPublish: true}}
+	product := MustNewProduct(ProductInput{Service: products, Site: site, Sessions: sessions, Templates: templates})
+	api := MustNewAPI(APIInput{Service: products, Token: testAPIToken, ImageBaseURL: testImageBaseURL})
 	private := func(h http.HandlerFunc) http.Handler { return auth.RequireLogin(h) }
 
 	app := http.NewServeMux()
@@ -102,6 +106,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
+	app.Handle("POST /admin/publish", private(product.Publish))
 	// Stands in for anything that stores data before login, giving the
 	// visitor a real session token to carry into it.
 	app.HandleFunc("GET /visit", func(_ http.ResponseWriter, r *http.Request) {
@@ -110,6 +115,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", MustNewStatic()))
+	mux.Handle("GET /api/products", api.RequireToken(http.HandlerFunc(api.Products)))
 	mux.Handle("/", sessions.LoadAndSave(app))
 
 	server := httptest.NewServer(RejectCrossOrigin(mux))
@@ -124,7 +130,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		// Redirects are what is being tested; do not follow them.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &testApp{server: server, client: client, service: service, products: products}
+	return &testApp{server: server, client: client, service: service, products: products, site: site}
 }
 
 func (a *testApp) get(t *testing.T, path string, header http.Header) (*http.Response, string) {
