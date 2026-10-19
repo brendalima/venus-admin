@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -32,9 +33,46 @@ func (m *mockProductRepository) List(context.Context) ([]domain.Product, error) 
 	}
 	ps := []domain.Product{}
 	for _, p := range m.products {
-		ps = append(ps, p)
+		if !p.Archived() {
+			ps = append(ps, p)
+		}
 	}
 	return ps, nil
+}
+
+func (m *mockProductRepository) ListArchived(context.Context) ([]domain.Product, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	ps := []domain.Product{}
+	for _, p := range m.products {
+		if p.Archived() {
+			ps = append(ps, p)
+		}
+	}
+	return ps, nil
+}
+
+func (m *mockProductRepository) CountArchived(ctx context.Context) (int, error) {
+	ps, err := m.ListArchived(ctx)
+	return len(ps), err
+}
+
+func (m *mockProductRepository) SetArchived(_ context.Context, id string, archived bool) (domain.Product, error) {
+	if m.writeErr != nil {
+		return domain.Product{}, m.writeErr
+	}
+	p, ok := m.products[id]
+	if !ok {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
+	}
+	m.writes++
+	p.ArchivedAt = time.Time{}
+	if archived {
+		p.ArchivedAt = time.Now()
+	}
+	m.products[id] = p
+	return p, nil
 }
 
 func (m *mockProductRepository) GetByID(_ context.Context, id string) (domain.Product, error) {
@@ -286,6 +324,48 @@ func TestProductSetSoldOut(t *testing.T) {
 	var nf *domain.NotFoundError
 	if _, err := s.SetSoldOut(context.Background(), uuid.New().String(), true); !errors.As(err, &nf) {
 		t.Errorf("missing product: err = %v, want NotFoundError", err)
+	}
+}
+
+func TestProductSetArchived(t *testing.T) {
+	repo := newMockProductRepository(existing)
+	s := newTestProductService(repo)
+	ctx := context.Background()
+
+	p, err := s.SetArchived(ctx, existing.ID, true)
+	if err != nil || !p.Archived() {
+		t.Fatalf("archiving = %+v, %v", p, err)
+	}
+	archivedAt := p.ArchivedAt
+	again, err := s.SetArchived(ctx, existing.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.writes != 1 || !again.ArchivedAt.Equal(archivedAt) {
+		t.Errorf("writes = %d, archived at %v then %v: archiving twice must change nothing",
+			repo.writes, archivedAt, again.ArchivedAt)
+	}
+	if listed, _ := s.List(ctx); len(listed) != 0 {
+		t.Errorf("an archived product is listed: %v", listed)
+	}
+	if n, err := s.CountArchived(ctx); n != 1 || err != nil {
+		t.Errorf("CountArchived = %d, %v", n, err)
+	}
+
+	if p, err = s.SetArchived(ctx, existing.ID, false); err != nil || p.Archived() {
+		t.Fatalf("restoring = %+v, %v", p, err)
+	}
+	if listed, _ := s.List(ctx); len(listed) != 1 {
+		t.Errorf("a restored product is not listed: %v", listed)
+	}
+
+	var nf *domain.NotFoundError
+	if _, err := s.SetArchived(ctx, uuid.New().String(), true); !errors.As(err, &nf) {
+		t.Errorf("missing product: err = %v, want NotFoundError", err)
+	}
+	repo.writeErr = errors.New("database timeout")
+	if _, err := s.SetArchived(ctx, existing.ID, true); !errors.Is(err, repo.writeErr) {
+		t.Errorf("failed write: err = %v", err)
 	}
 }
 

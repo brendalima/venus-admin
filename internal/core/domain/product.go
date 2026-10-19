@@ -33,9 +33,17 @@ type Product struct {
 
 	Images []Image
 
+	// ArchivedAt is when the piece left the collection: it no longer
+	// shows on the site, but keeps its photos and can come back. Zero
+	// means it is in the collection.
+	ArchivedAt time.Time
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Archived reports whether the piece is out of the collection.
+func (p Product) Archived() bool { return !p.ArchivedAt.IsZero() }
 
 // HasPrice reports whether the price has been set.
 func (p Product) HasPrice() bool { return p.PriceCents > 0 }

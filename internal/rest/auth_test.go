@@ -114,6 +114,12 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("GET /admin/products/{id}", private(product.Edit))
 	app.Handle("POST /admin/products/{id}", private(product.Update))
 	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
+	app.Handle("GET /admin/products/{id}/archive", private(product.ConfirmArchive))
+	app.Handle("POST /admin/products/{id}/archive", private(product.Archive))
+	app.Handle("POST /admin/products/{id}/unarchive", private(product.Unarchive))
+	app.Handle("GET /admin/arquivadas", private(product.ListArchived))
+	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
 	app.Handle("POST /admin/publish", private(product.Publish))

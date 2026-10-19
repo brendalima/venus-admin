@@ -106,14 +106,18 @@ Every route here requires login; without it, the browser is sent to `/login`.
 
 | Route | Purpose |
 |---|---|
-| `GET /admin` | List of products, with a quick "sold out" toggle |
+| `GET /admin` | The collection: products not archived, with a quick "sold out" toggle and a link to the archived ones |
 | `GET /admin/products/new` | Form for a new product |
 | `POST /admin/products` | Creates a product |
 | `GET /admin/products/{id}` | Edit form |
 | `POST /admin/products/{id}` | Saves the edits |
 | `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
-| `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product |
-| `POST /admin/products/{id}/delete` | Deletes it, and its photo files |
+| `GET /admin/products/{id}/archive` | Asks for confirmation before taking the product out of the collection |
+| `POST /admin/products/{id}/archive` | Archives it: off the site on the next publish, kept with its photos |
+| `POST /admin/products/{id}/unarchive` | Puts it back in the collection, in its old place; answers a row saying so to HTMX |
+| `GET /admin/arquivadas` | The archived products, most recent first |
+| `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product; linked from the archived list only |
+| `POST /admin/products/{id}/delete` | Deletes it for good, and its photo files |
 | `POST /admin/publish` | Starts the site's rebuild (below) |
 
 Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the photos: `photos` (files), `photo_order` (the final order, cover first: `id:<image id>` for a photo the product has, `new:<n>` for the nth file) and `photo_remove` (repeated, photos to delete). Without `photo_order`, as from a browser without JavaScript, the files go after the existing photos.
@@ -121,7 +125,7 @@ Product form fields (`multipart/form-data`, since photos go with them): `name`, 
 - **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
 - **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
 - **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
-- **Deleting** goes through a confirmation page that names the product and suggests marking it sold out instead.
+- **Archiving, not deleting, is how a piece leaves the site.** The edit screen offers "Tirar da coleção", which keeps the product, its photos and its files, and suggests marking it sold out instead if it only ran out. Deleting for good is offered only from the archived list, through a confirmation page that says the photo files go too.
 
 ### Photos
 
@@ -153,7 +157,7 @@ Without `DEPLOY_HOOK_URL` there is nothing to rebuild. Development then only log
 
 ### The site's API
 
-`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
+`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product in the collection (archived ones are left out) in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
 
 ```bash
 curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
@@ -298,6 +302,6 @@ fly tokens create deploy   # store the output as the GitHub secret FLY_API_TOKEN
 
 ## Status
 
-Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, delete. Photos: upload, resize, reorder, delete, stored in R2. Publishing: the pending-changes badge, the publish button and `/api/products`, with the deploy hook waiting for the site's Pages project. Password reset by email through Resend.
+Server, configuration, middleware, health checks, graceful shutdown, separate migration binary, Docker, docker compose, fly.toml, CI. Neon connected, catalogue schema migrated (`products`, `product_images`, `site_state`), domain model and contracts defined, Postgres product repository with integration tests. Login, logout and sessions, with users created by `cmd/adduser`. Product screens: list, create, edit, sold-out toggle, archive and restore, delete from the archive. Photos: upload, resize, reorder, delete, stored in R2. Publishing: the pending-changes badge, the publish button and `/api/products`, with the deploy hook waiting for the site's Pages project. Password reset by email through Resend.
 
 Next: the site's build reading `/api/products` (M4).

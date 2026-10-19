@@ -1,0 +1,17 @@
+{{define "title"}}Tirar da coleção{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>Tirar “{{.Product.Name}}” da coleção?</h1>
+  <p>Ela sai do site na próxima publicação, mas continua aqui com as fotos. Dá para trazer de volta quando quiser.</p>
+  <p class="muted">Se ela só acabou no estoque, prefira marcá-la como esgotada — assim continua aparecendo no site.</p>
+  <form method="post" action="/admin/products/{{.Product.ID}}/archive">
+    <div class="actions">
+      <button type="submit">Sim, tirar da coleção</button>
+      <a href="/admin/products/{{.Product.ID}}">Não, voltar</a>
+    </div>
+  </form>
+</div>
+{{end}}

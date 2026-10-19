@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
@@ -21,8 +22,9 @@ const auroraID = "8a0e2f9e-4a8b-4c55-9d4c-6f1b7b0f2a11"
 type mockProductService struct {
 	products map[string]domain.Product // by ID
 	listErr  error
+	countErr error
 	getErr   error
-	writeErr error // returned by Create, Update, SetSoldOut and Delete
+	writeErr error // returned by Create, Update, SetSoldOut, SetArchived and Delete
 	created  []domain.Product
 	updated  []domain.Product
 	photoErr error               // returned by Create and Update when a photo edit is sent
@@ -41,12 +43,34 @@ func (m *mockProductService) List(context.Context) ([]domain.Product, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
+	return m.list(false), nil
+}
+
+func (m *mockProductService) ListArchived(context.Context) ([]domain.Product, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.list(true), nil
+}
+
+func (m *mockProductService) CountArchived(context.Context) (int, error) {
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
+	return len(m.list(true)), nil
+}
+
+// list follows the real service: the collection and the archived pieces
+// are never listed together.
+func (m *mockProductService) list(archived bool) []domain.Product {
 	ps := []domain.Product{}
 	for _, p := range m.products {
-		ps = append(ps, p)
+		if p.Archived() == archived {
+			ps = append(ps, p)
+		}
 	}
 	slices.SortFunc(ps, func(a, b domain.Product) int { return strings.Compare(a.Name, b.Name) })
-	return ps, nil
+	return ps
 }
 
 func (m *mockProductService) GetByID(_ context.Context, id string) (domain.Product, error) {
@@ -96,6 +120,7 @@ func (m *mockProductService) Update(_ context.Context, p domain.Product, photos 
 		return domain.Product{}, m.writeErr
 	}
 	p.Images = images
+	p.ArchivedAt = current.ArchivedAt
 	m.updated = append(m.updated, p)
 	m.products[p.ID] = p
 	return p, nil
@@ -170,6 +195,22 @@ func (m *mockProductService) SetSoldOut(_ context.Context, id string, soldOut bo
 	return p, nil
 }
 
+func (m *mockProductService) SetArchived(_ context.Context, id string, archived bool) (domain.Product, error) {
+	if m.writeErr != nil {
+		return domain.Product{}, m.writeErr
+	}
+	p, ok := m.products[id]
+	if !ok {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
+	}
+	p.ArchivedAt = time.Time{}
+	if archived {
+		p.ArchivedAt = time.Date(2026, 10, 19, 1, 30, 0, 0, time.UTC) // still the 18th in Brasília
+	}
+	m.products[id] = p
+	return p, nil
+}
+
 func (m *mockProductService) Delete(_ context.Context, id string) error {
 	if m.writeErr != nil {
 		return m.writeErr
@@ -219,7 +260,7 @@ func TestNewProductRejectsMissingDependencies(t *testing.T) {
 func TestProductScreensRequireLogin(t *testing.T) {
 	app := newTestApp(t, nil)
 
-	for _, path := range []string{"/admin", "/admin/products/new", "/admin/products/" + auroraID} {
+	for _, path := range []string{"/admin", "/admin/products/new", "/admin/products/" + auroraID, "/admin/arquivadas"} {
 		if res, _ := app.get(t, path, nil); res.Header.Get("Location") != "/login" {
 			t.Errorf("anonymous GET %s: status %d, location %q", path, res.StatusCode, res.Header.Get("Location"))
 		}
@@ -415,7 +456,7 @@ func TestProductEdit(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	for _, want := range []string{`value="Biquíni Aurora"`, `value="189,90"`, "Verde esmeralda\nForro duplo", `value="biquini-aurora"`, "Apagar esta peça"} {
+	for _, want := range []string{`value="Biquíni Aurora"`, `value="189,90"`, "Verde esmeralda\nForro duplo", `value="biquini-aurora"`, "Tirar da coleção"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("edit form does not contain %q", want)
 		}
@@ -525,7 +566,7 @@ func TestProductDelete(t *testing.T) {
 	path := "/admin/products/" + auroraID + "/delete"
 
 	res, body := app.get(t, path, nil)
-	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Apagar “Biquíni Aurora”?") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Apagar “Biquíni Aurora” de vez?") {
 		t.Fatalf("confirmation page: status %d", res.StatusCode)
 	}
 	if _, ok := app.products.products[auroraID]; !ok {
@@ -539,18 +580,151 @@ func TestProductDelete(t *testing.T) {
 	app.products.writeErr = nil
 
 	res, _ = app.post(t, path, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/arquivadas" {
 		t.Fatalf("delete: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	if _, ok := app.products.products[auroraID]; ok {
 		t.Error("the product is still there")
 	}
-	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "“Biquíni Aurora” foi apagada.") {
+	if _, body := app.get(t, "/admin/arquivadas", nil); !strings.Contains(body, "“Biquíni Aurora” foi apagada de vez.") {
 		t.Error("no confirmation after deleting")
 	}
 
 	if res, _ := app.post(t, path, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("deleting again: status %d, want 404", res.StatusCode)
+	}
+}
+
+func TestProductArchive(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	app.products.add(aurora())
+	path := "/admin/products/" + auroraID + "/archive"
+
+	// The edit screen offers archiving, not deleting.
+	_, body := app.get(t, "/admin/products/"+auroraID, nil)
+	if !strings.Contains(body, `href="`+path+`"`) || strings.Contains(body, "/delete") {
+		t.Errorf("edit screen: want a link to archive and none to delete")
+	}
+
+	res, body := app.get(t, path, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Tirar “Biquíni Aurora” da coleção?") {
+		t.Fatalf("confirmation page: status %d", res.StatusCode)
+	}
+	if app.products.products[auroraID].Archived() {
+		t.Fatal("showing the confirmation archived the product")
+	}
+
+	res, _ = app.post(t, path, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
+		t.Fatalf("archive: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if !app.products.products[auroraID].Archived() {
+		t.Fatal("the product was not archived")
+	}
+
+	_, body = app.get(t, "/admin", nil)
+	if !strings.Contains(body, "saiu da coleção") || !strings.Contains(body, "Nenhuma peça cadastrada ainda") {
+		t.Error("the list still shows the archived product, or does not say it left")
+	}
+	if !strings.Contains(body, "Peças arquivadas (1)") {
+		t.Error("the list does not lead to the archived pieces with their count")
+	}
+
+	res, body = app.get(t, "/admin/arquivadas", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("archived list: status %d", res.StatusCode)
+	}
+	for _, want := range []string{"Biquíni Aurora", "Arquivada em 18/10/2026", "Voltar para a coleção", "/admin/products/" + auroraID + "/delete"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("archived list does not show %q", want)
+		}
+	}
+
+	// An archived piece can still be edited, and is offered back.
+	_, body = app.get(t, "/admin/products/"+auroraID, nil)
+	if !strings.Contains(body, "Esta peça está arquivada") || strings.Contains(body, `href="`+path+`"`) {
+		t.Error("the edit screen of an archived piece does not say so")
+	}
+	res, _ = app.post(t, "/admin/products/"+auroraID, validForm())
+	if res.Header.Get("Location") != "/admin/arquivadas" || !app.products.products[auroraID].Archived() {
+		t.Errorf("saving an archived piece: location %q, archived %v",
+			res.Header.Get("Location"), app.products.products[auroraID].Archived())
+	}
+}
+
+func TestProductUnarchive(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	archived := aurora()
+	archived.ArchivedAt = time.Now()
+	app.products.add(archived)
+	path := "/admin/products/" + auroraID + "/unarchive"
+
+	// Through HTMX, from the archived list: a row saying so, in place.
+	res, body := app.postHTMX(t, path, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(body), "<li") || !strings.Contains(body, "voltou para a coleção") {
+		t.Errorf("want only the row saying it is back, got:\n%s", body)
+	}
+	if app.products.products[auroraID].Archived() {
+		t.Fatal("the product is still archived")
+	}
+	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "Biquíni Aurora") || !strings.Contains(body, "Peças arquivadas (0)") {
+		t.Error("the restored piece is not back in the list")
+	}
+	if _, body := app.get(t, "/admin/arquivadas", nil); !strings.Contains(body, "Nenhuma peça arquivada") {
+		t.Error("an empty archive does not say so")
+	}
+
+	// Without JavaScript, and asked twice: back to the list, no harm done.
+	res, _ = app.post(t, path, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
+		t.Errorf("plain form: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
+	}
+
+	res, _ = app.postHTMX(t, "/admin/products/gone/unarchive", nil)
+	if res.Header.Get("HX-Redirect") != "/admin" {
+		t.Errorf("missing product: HX-Redirect %q, want /admin", res.Header.Get("HX-Redirect"))
+	}
+	if _, body := app.get(t, "/admin", nil); !strings.Contains(body, "Essa peça não existe mais") {
+		t.Error("the list does not explain what happened")
+	}
+}
+
+func TestProductArchiveFailures(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	app.products.add(aurora())
+
+	app.products.writeErr = errors.New("database timeout")
+	res, _ := app.post(t, "/admin/products/"+auroraID+"/archive", nil)
+	if res.Header.Get("Location") != "/admin" || app.products.products[auroraID].Archived() {
+		t.Errorf("failed archive: location %q", res.Header.Get("Location"))
+	}
+	_, body := app.get(t, "/admin", nil)
+	if !strings.Contains(body, "Não consegui salvar agora") || strings.Contains(body, "database timeout") {
+		t.Error("a failed archive is not explained, or leaks the error")
+	}
+	app.products.writeErr = nil
+
+	// The count is only a hint: the list shows without it.
+	app.products.countErr = errors.New("database timeout")
+	res, body = app.get(t, "/admin", nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Peças arquivadas</a>") {
+		t.Errorf("count failure: status %d, want the link without a number", res.StatusCode)
+	}
+
+	app.products.listErr = errors.New("database timeout")
+	res, body = app.get(t, "/admin/arquivadas", nil)
+	if res.StatusCode != http.StatusInternalServerError || !strings.Contains(body, "Não consegui carregar as peças arquivadas") {
+		t.Errorf("archived list failure: status %d", res.StatusCode)
+	}
+
+	if res, _ := app.get(t, "/admin/products/gone/archive", nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("confirming a missing product: status %d, want 404", res.StatusCode)
 	}
 }
 

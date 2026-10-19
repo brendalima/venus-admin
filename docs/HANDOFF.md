@@ -2,13 +2,22 @@
 
 For whoever picks up the next milestone. Everything below was verified against the repo, not recalled.
 
-Last verified: 2026-10-18 · `master` at `2578ba4` (PR #5, `publishing`, merged) · password reset on PR #6 (`password-reset`), rebased onto it and ready to merge.
+Last verified: 2026-10-18 · `master` at `0302a51` (PR #6, `password-reset`, merged) · archiving (phase 0a of the variations plan) on branch `archive-products`, not yet pushed.
 
 > **Read first (2026-10-18, evening):**
-> - **M1, M2 and M3 are done.** Password reset is the last piece of M1, on PR #6; its secrets (`RESEND_API_KEY`, `MAIL_FROM`) are already in `fly secrets`. Next is M4, the site (§4).
-> - **Migration numbers:** `00006` is password reset (`password_resets`, `admin_users.password_version`). The next migration is `00007`. Never land a lower number after a higher one; goose refuses migrations older than the last one applied.
+> - **M1, M2 and M3 are done**, password reset included (PR #6, merged).
+> - **Product variations (colour × size × quantity) are planned and under way (2026-10-18, night).** Plan: `~/.claude/plans/witty-beaming-tiger.md`, in Portuguese, phases 0a to 5 in its §7. **Phase 0a, archiving, is done** on branch `archive-products` (see the note below). Next: 0b in `../venus-site` (sold-out pieces dimmed), which needs nothing from the admin, and phase 1 here (migration `00008`, colours in the domain and repository).
+> - **M4 is half done (2026-10-18, night).** The storefront is **live at `venus-site.pages.dev`** on Cloudflare Pages, and `../venus-site` now fetches the catalogue from `/api/products` at build time. What is left is all on the human's side: the Pages variables, the deploy hook and the apex domain — see §4.
+> - **Migration numbers:** `00006` is password reset, `00007` is archiving (`products.archived_at`, on `archive-products`). The next migration is `00008`, reserved by the plan for product variations. Never land a lower number after a higher one; goose refuses migrations older than the last one applied.
 > - **Several agents may work in this repository at once.** Check `git branch --show-current` and `git status` before switching branches; to work on another branch, use `git worktree add` in a sibling directory and symlink `.env.local` into it.
 
+> **2026-10-18, night:** phase 0a of the variations plan, **archiving**, is done on branch `archive-products`, cut from `master` at `0302a51` in a worktree (`../venus-admin-archive-products`), because the main checkout may belong to another agent. Migration `00007` adds `products.archived_at` (NULL = in the collection) and a partial index for the collection. "Tirar da coleção" replaces "Apagar esta peça" on the edit screen, with a confirmation that points to "esgotada" as the alternative; `/admin/arquivadas` lists archived pieces with "Voltar para a coleção" (HTMX, swaps in a row saying it is back) and "Apagar de vez", now the only link to the delete confirmation, which says the photo files go too. The main list links to the archive with its count. Verified against the real binary, Neon `dev` (migrated to 7) and the R2 dev bucket in Chromium at 390px: create with a photo, archive, gone from the list and from `/api/products`, count and publish badge updated, in the archive with its date and photo, restored in place, back in the list and the API with its photo, archived again, edited while archived (saving returns to the archive), deleted from the archive, the photo file 404 on R2 afterwards. 22 checks; the only console error is `/favicon.ico` 404, which predates this. The throwaway user and products were removed. Choices worth knowing before changing them:
+> - **The filter lives in `ProductRepository.List` only.** `List` is the collection, and both `/admin` and `/api/products` read it; `ListArchived` and `CountArchived` are separate. `GetByID`/`GetBySlug` do not filter, so archived pieces can be edited. The integration test `TestProductArchive` was seen failing with the `WHERE archived_at IS NULL` removed (plan §8, test #9). The API's own test only shows it goes through `List`, with a mock.
+> - **Archiving keeps `position`,** so a restored piece comes back where it was. `Update` and `UpdateWithImages` never write `archived_at`, but return it, so the handler can send the save of an archived piece back to the archive. `SetArchived` in the service skips the write when the state is already the one asked for, like `SetSoldOut`, so a double tap does not move the date or light the badge.
+> - **Dates show in Brasília time** through a fixed UTC−3 (`formatDate` in `rest/templates.go`): Brazil has had no daylight saving since 2019, and the distroless image then needs no zone database.
+> - **Not enforced, on purpose:** deleting a piece that is not archived still works if someone types the URL; only the links changed, and the confirmation then suggests archiving instead.
+> - **Loose ends:** an archived piece keeps its slug, so creating a new piece with the same name is refused with "Já existe uma peça com esse nome", which will puzzle someone who cannot see it in the list. Editing an archived piece lights the publish badge although the site would not change. Archiving does not free R2 space (plan §9). The `00007` Down brings every archived piece back into the collection.
+>
 > **2026-10-17:** the layout was restructured to follow the new [AGENTS.md](../AGENTS.md). Paths below are updated; `internal/catalog` is now split into `internal/core/domain`, `internal/repository/contracts.go` and `internal/storage/contracts.go`. Migrations no longer run at API startup (`cmd/migrate` is Fly's `release_command`), the database layer uses `database/sql` over pgx, and the API now requires a database URL. Product and image IDs are UUIDs generated by the application (migration `00002`).
 >
 > **2026-10-17, later:** M1 step 1 is done. `internal/repository/product.go` implements `ProductRepository` and is integration-tested against Neon. Migration `00003` adds `site_state.last_changed_at`, kept up to date by triggers, because comparing each product's `updated_at` missed deletes and photo changes. `adapters.Migrate` now holds a Postgres advisory lock: `go test ./...` migrates from two packages in parallel, and the unlocked version collided.
@@ -90,11 +99,11 @@ The consequence worth internalising: **if this backend is down, asleep or mid-de
 | Health checks | `/healthz` (liveness, no DB) and `/readyz` (readiness, DB) |
 | Configuration | Env-only, validated, `.env.local` auto-loaded in dev (`adapters/config.go`) |
 | Database | Neon Postgres 18, region `aws-sa-east-1`, connected and migrated |
-| Schema | `products`, `product_images`, `site_state` + `updated_at` trigger |
+| Schema | `products` (with `archived_at`, `00007`), `product_images`, `site_state` + `updated_at` trigger |
 | Domain model | `Product`, `Image`, `Slugify`, validation |
 | Authentication | argon2id passwords, scs sessions in Postgres, login rate limit per IP, CSRF via `http.CrossOriginProtection`, `cmd/adduser`, password reset by email (Resend) that logs out other sessions |
 | Contracts | `ProductRepository`, `SiteRepository`, `UserRepository`, `SessionRepository`, `PasswordResetRepository`, `Mailer` (Resend, plus a log mailer for development), `ImageStore` (R2, plus a disk store for development), `ImageProcessor` (pure Go, JPEG) and `SitePublisher` (Pages deploy hook, plus a logging one for development), all implemented |
-| Product screens | List with covers, create, edit, sold-out toggle, delete with confirmation; `html/template` + vendored HTMX, all embedded |
+| Product screens | List with covers, create, edit, sold-out toggle, archive and restore (`/admin/arquivadas`), delete for good from the archive; `html/template` + vendored HTMX, all embedded |
 | Photos | Chosen, arranged and removed on screen, saved with the product all or nothing; 600w and 1200w JPEG with EXIF stripped; files in R2 |
 | Publishing | Pending-changes badge and "Publicar alterações" on the list, deploy hook optional; `GET /api/products` behind a bearer token |
 | Architecture guard | `internal/architecture_test.go` fails on any import AGENTS.md §2 forbids, or `os.Getenv` in `internal/` |
@@ -139,7 +148,21 @@ M1 (products, login, password reset) and M2 (photos) are done, password reset pe
 
 `/api/products` is what the site's build reads: `GET`, read-only, with `Authorization: Bearer $API_TOKEN`. The README has the shape and an example. Photo URLs are `IMAGE_BASE_URL` plus each key, 600 and 1200.
 
-**M4, next:** deploy `../venus-site` to Cloudflare Pages and make its build fetch `/api/products` with the token (a Pages secret holding the same value as Fly's `API_TOKEN`), map the snake_case to its types, hide a missing price, and drop the photo `label` (see the notes at the top). Then create the deploy hook in Pages and `fly secrets set DEPLOY_HOOK_URL=…`; the button appears with no code change. The first real publish is M3's end-to-end check. Mind that the build must tolerate the admin's machine waking up (Fly starts it on the request, which takes a second or two) and Neon resuming. Full plan: `~/.claude/plans/graceful-gathering-koala.md` (in Portuguese; note that this directory has been wiped by an automated cleanup once already — copy anything you rely on).
+**M4, in progress.** Done in `../venus-site` (one commit on `master`, **not yet pushed** — the SSH key is passphrase-protected, see §6):
+
+- **The site is deployed** at `venus-site.pages.dev`. It is a **Pages** project, not a Worker: the human first created it under Workers and the build failed, because an assets-only Worker needs a `wrangler.jsonc` the repo does not have. Pages, with build `npm run build` and output `dist`, worked on the existing code with no change. `public/_redirects` is what gives Pages the SPA fallback — **removing it 404s every deep link**, verified on the live deploy.
+- **The build reads the catalogue.** `scripts/catalogo.mjs` fetches `GET /api/products`, maps the snake_case, and writes `src/data/catalogo.json`, which `src/data/products.ts` types as `Product[]` — `tsc` rejects a JSON outside the type, verified by planting a wrong field. The committed copy of that JSON is what lets `npm run dev` run without the admin.
+- **Failure is loud by design** (decided with the human): 5 attempts with doubling backoff (2s–16s) to cover the Fly machine waking and Neon resuming, then the build exits non-zero and Pages keeps the previous deploy. Publishing yesterday's catalogue while reporting success would hide the failure; the admin's "Há alterações não publicadas" badge staying on is the honest signal. All of these paths were verified by breaking them, including the 401 (which does not retry) and the `CF_PAGES`-without-variables guard.
+- **A missing price shows nothing, photos lost the `label`** (the notes at the top), verified by rendering a no-price, no-photo catalogue at 360px and 1280px.
+
+Left for the human, all in the dashboard:
+
+1. **Push the commit** in `../venus-site`.
+2. **Pages variables:** `ADMIN_API_URL=https://admin.venusoasis.com.br` and `API_TOKEN` (as a secret) holding the **same value as Fly's `API_TOKEN`** — which only the human has, since `fly secrets` are write-only. Without them the Cloudflare build fails on purpose.
+3. **Deploy hook:** *Settings > Builds > Deploy hooks*, then `fly secrets set DEPLOY_HOOK_URL=…`. The publish button appears with no code change, and the first real publish is M3's end-to-end check.
+4. **The apex domain:** `venusoasis.com.br` still points nowhere; attach it to the Pages project.
+
+Full plan: `~/.claude/plans/graceful-gathering-koala.md` (in Portuguese; note that this directory has been wiped by an automated cleanup once already — copy anything you rely on).
 
 ---
 
