@@ -17,11 +17,15 @@ type mockProductRepository struct {
 	err      error                     // returned by every method when set
 	writeErr error                     // returned by Create and Update when set
 	writes   int
+	changes  domain.ColourChanges // the last UpdateWithColours received
 }
 
 func newMockProductRepository(ps ...domain.Product) *mockProductRepository {
 	m := &mockProductRepository{products: map[string]domain.Product{}}
 	for _, p := range ps {
+		// Tests change the stored colours; the fixtures must not change
+		// with them.
+		p.Colours = slices.Clone(p.Colours)
 		m.products[p.ID] = p
 	}
 	return m
@@ -105,27 +109,50 @@ func (m *mockProductRepository) Update(_ context.Context, p domain.Product) (dom
 		return domain.Product{}, m.writeErr
 	}
 	m.writes++
-	p.Images = m.products[p.ID].Images // a plain update leaves them alone
+	p.Colours = m.products[p.ID].Colours // a plain update leaves them alone
 	m.products[p.ID] = p
 	return p, nil
 }
 
-// UpdateWithImages trusts the service's own staleness check, which is
+// UpdateWithColours trusts the service's own staleness check, which is
 // what these tests exercise; the real one is covered by the repository's
 // integration tests.
-func (m *mockProductRepository) UpdateWithImages(_ context.Context, p domain.Product, _, removed []string) (domain.Product, []domain.Image, error) {
+func (m *mockProductRepository) UpdateWithColours(_ context.Context, p domain.Product, changes domain.ColourChanges) (domain.Product, []domain.Image, error) {
 	if m.writeErr != nil {
 		return domain.Product{}, nil, m.writeErr
 	}
 	m.writes++
+	m.changes = changes
 	var gone []domain.Image
-	for _, img := range m.products[p.ID].Images {
-		if slices.Contains(removed, img.ID) {
-			gone = append(gone, img)
+	for _, c := range m.products[p.ID].Colours {
+		for _, img := range c.Images {
+			if slices.Contains(changes.RemovedImages, img.ID) || slices.Contains(changes.RemovedColours, c.ID) {
+				gone = append(gone, img)
+			}
 		}
 	}
 	m.products[p.ID] = p
 	return p, gone, nil
+}
+
+func (m *mockProductRepository) SetStock(_ context.Context, colourID, size string, quantity int32) error {
+	if m.writeErr != nil {
+		return m.writeErr
+	}
+	for id, p := range m.products {
+		for i, c := range p.Colours {
+			if c.ID != colourID {
+				continue
+			}
+			m.writes++
+			p.Colours = slices.Clone(p.Colours)
+			stock := slices.DeleteFunc(slices.Clone(c.Stock), func(s domain.Stock) bool { return s.Size == size })
+			p.Colours[i].Stock = append(stock, domain.Stock{Size: size, Quantity: quantity})
+			m.products[id] = p
+			return nil
+		}
+	}
+	return domain.NewNotFoundError("colour not found")
 }
 
 func (m *mockProductRepository) Delete(_ context.Context, id string) error {
@@ -148,10 +175,30 @@ func validInput() domain.Product {
 	}
 }
 
-// existing is a stored product the update tests start from.
+// existing is a stored product the update tests start from, with one
+// colour.
 var existing = domain.Product{
 	ID: "8a0e2f9e-4a8b-4c55-9d4c-6f1b7b0f2a11", Slug: "biquini-aurora", Name: "Biquíni Aurora",
 	PriceCents: 18900, Sizes: []string{"P"}, Position: 7,
+	Colours: []domain.Colour{{ID: "0c7d4a52-7f0a-4f38-9a53-5be0f0b3f6d2", Name: "Bege"}},
+}
+
+// oneColour is the simplest colour edit a new product can be created
+// with.
+func oneColour() domain.ColoursEdit {
+	return domain.ColoursEdit{Colours: []domain.ColourEdit{{Name: "Bege"}}}
+}
+
+// keepColours is an edit that leaves the stored product's colours, photos
+// and stock as they are.
+func keepColours(p domain.Product) *domain.ColoursEdit {
+	e := &domain.ColoursEdit{}
+	for _, c := range p.Colours {
+		e.Colours = append(e.Colours, domain.ColourEdit{
+			ID: c.ID, Name: c.Name, Stock: c.Stock, Photos: domain.PhotoEdit{AppendNew: true},
+		})
+	}
+	return e
 }
 
 func TestNewProduct(t *testing.T) {
@@ -174,9 +221,12 @@ func TestProductCreate(t *testing.T) {
 	repo := newMockProductRepository()
 	s := newTestProductService(repo)
 
-	p, err := s.Create(context.Background(), validInput(), nil)
+	p, err := s.Create(context.Background(), validInput(), oneColour())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Colours) != 1 || p.Colours[0].Name != "Bege" || uuid.Validate(p.Colours[0].ID) != nil {
+		t.Errorf("colours %+v, want Bege with a generated UUID", p.Colours)
 	}
 	if uuid.Validate(p.ID) != nil {
 		t.Errorf("ID = %q, want a generated UUID", p.ID)
@@ -193,11 +243,14 @@ func TestProductCreateFailures(t *testing.T) {
 	tests := []struct {
 		name      string
 		edit      func(*domain.Product)
+		colours   *domain.ColoursEdit // oneColour when nil
 		writeErr  error
 		wantField string // validation error expected on this field
 	}{
 		{name: "invalid", edit: func(p *domain.Product) { p.Name, p.PriceCents = "", 0 }, wantField: "name"},
-		{name: "name taken", writeErr: domain.NewConflictError("slug already in use"), wantField: "name"},
+		{name: "no colour", colours: &domain.ColoursEdit{}, wantField: "colours"},
+		{name: "name taken", writeErr: domain.NewConflictError(domain.ConflictSlug), wantField: "name"},
+		{name: "colour name taken", writeErr: domain.NewConflictError(domain.ConflictColourName), wantField: "colours"},
 		{name: "database down", writeErr: errors.New("timeout")},
 	}
 
@@ -210,7 +263,12 @@ func TestProductCreateFailures(t *testing.T) {
 				tt.edit(&in)
 			}
 
-			_, err := newTestProductService(repo).Create(context.Background(), in, nil)
+			colours := oneColour()
+			if tt.colours != nil {
+				colours = *tt.colours
+			}
+
+			_, err := newTestProductService(repo).Create(context.Background(), in, colours)
 
 			var v *domain.ValidationError
 			if tt.wantField == "" {
@@ -269,12 +327,18 @@ func TestProductUpdateFailures(t *testing.T) {
 		name      string
 		id        string
 		writeErr  error
+		colours   *domain.ColoursEdit
 		wantField string
 		notFound  bool
 	}{
 		{name: "missing product", id: uuid.New().String(), notFound: true},
-		{name: "slug taken", id: existing.ID, writeErr: domain.NewConflictError("slug already in use"), wantField: "slug"},
+		{name: "slug taken", id: existing.ID, writeErr: domain.NewConflictError(domain.ConflictSlug), wantField: "slug"},
+		{
+			name: "colour name taken", id: existing.ID, colours: keepColours(existing),
+			writeErr: domain.NewConflictError(domain.ConflictColourName), wantField: "colours",
+		},
 		{name: "database down", id: existing.ID, writeErr: errors.New("timeout")},
+		{name: "database down with colours", id: existing.ID, colours: keepColours(existing), writeErr: errors.New("timeout")},
 	}
 
 	for _, tt := range tests {
@@ -284,7 +348,7 @@ func TestProductUpdateFailures(t *testing.T) {
 			in := validInput()
 			in.ID = tt.id
 
-			_, err := newTestProductService(repo).Update(context.Background(), in, nil)
+			_, err := newTestProductService(repo).Update(context.Background(), in, tt.colours)
 
 			var v *domain.ValidationError
 			var nf *domain.NotFoundError
@@ -324,6 +388,63 @@ func TestProductSetSoldOut(t *testing.T) {
 	var nf *domain.NotFoundError
 	if _, err := s.SetSoldOut(context.Background(), uuid.New().String(), true); !errors.As(err, &nf) {
 		t.Errorf("missing product: err = %v, want NotFoundError", err)
+	}
+}
+
+func TestProductSetStock(t *testing.T) {
+	ctx := context.Background()
+	colour := existing.Colours[0].ID
+
+	repo := newMockProductRepository(existing)
+	s := newTestProductService(repo)
+	p, err := s.SetStock(ctx, existing.ID, colour, "P", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []domain.Stock{{Size: "P", Quantity: 3}}; !slices.Equal(p.Colours[0].Stock, want) {
+		t.Errorf("stock %v, want %v", p.Colours[0].Stock, want)
+	}
+	if _, err := s.SetStock(ctx, existing.ID, colour, "P", 3); err != nil {
+		t.Fatal(err)
+	}
+	if repo.writes != 1 {
+		t.Errorf("writes = %d, want 1: asking twice must not record a second change", repo.writes)
+	}
+	if p, err = s.SetStock(ctx, existing.ID, colour, "P", 0); err != nil || p.Colours[0].Stock[0].Quantity != 0 {
+		t.Errorf("down to zero = %+v, %v", p.Colours, err)
+	}
+
+	tests := []struct {
+		name            string
+		product, colour string
+		size            string
+		quantity        int32
+		wantField       string
+		wantNotFound    bool
+	}{
+		{name: "missing product", product: uuid.New().String(), colour: colour, size: "P", wantNotFound: true},
+		{name: "colour of another product", product: existing.ID, colour: uuid.New().String(), size: "P", wantNotFound: true},
+		// G is a size, but not one this piece comes in.
+		{name: "size not in the grid", product: existing.ID, colour: colour, size: "G", wantField: "size"},
+		{name: "negative", product: existing.ID, colour: colour, size: "P", quantity: -1, wantField: "quantity"},
+		{name: "too many", product: existing.ID, colour: colour, size: "P", quantity: domain.MaxQuantity + 1, wantField: "quantity"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMockProductRepository(existing)
+			_, err := newTestProductService(repo).SetStock(ctx, tt.product, tt.colour, tt.size, tt.quantity)
+			var nf *domain.NotFoundError
+			var v *domain.ValidationError
+			switch {
+			case tt.wantNotFound && !errors.As(err, &nf):
+				t.Errorf("err = %v, want NotFoundError", err)
+			case tt.wantField != "" && (!errors.As(err, &v) || v.Field != tt.wantField):
+				t.Errorf("err = %v, want a ValidationError on %s", err, tt.wantField)
+			}
+			if repo.writes != 0 {
+				t.Error("the stock was written")
+			}
+		})
 	}
 }
 

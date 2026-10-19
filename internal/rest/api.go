@@ -104,12 +104,13 @@ func (a *API) Products(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) toProductResponse(p domain.Product) productResponse {
+	images := p.Images()
 	res := productResponse{
 		ID:          p.ID,
 		Slug:        p.Slug,
 		Name:        p.Name,
 		Sizes:       p.Sizes,
-		Images:      make([]imageResponse, 0, len(p.Images)),
+		Images:      make([]imageResponse, 0, len(images)),
 		Description: p.Description,
 		Details:     p.Details,
 		SoldOut:     p.SoldOut,
@@ -120,7 +121,7 @@ func (a *API) toProductResponse(p domain.Product) productResponse {
 	if res.Sizes == nil {
 		res.Sizes = []string{}
 	}
-	for _, img := range p.Images {
+	for _, img := range images {
 		res.Images = append(res.Images, imageResponse{
 			URL600:  a.imageBaseURL + "/" + img.Key600,
 			URL1200: a.imageBaseURL + "/" + img.Key1200,

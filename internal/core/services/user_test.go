@@ -79,7 +79,7 @@ func TestUserCreate(t *testing.T) {
 		{name: "short password", email: "ana@exemplo.com", password: "curta", wantField: "password"},
 		{
 			name: "email taken", email: "ana@exemplo.com", password: "uma senha longa",
-			createErr: domain.NewConflictError("email already in use"),
+			createErr: domain.NewConflictError(domain.ConflictEmail),
 			wantErr:   &domain.ConflictError{},
 		},
 	}

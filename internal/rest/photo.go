@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +22,10 @@ const (
 	// before sending.
 	maxPhotoBytes = 15 << 20
 
-	// maxProductUploadBytes allows a whole product's worth of photos with
-	// the form. Files past the first megabyte are spooled to disk while
-	// the form is parsed, not held in memory.
-	maxProductUploadBytes = domain.MaxImages*maxPhotoBytes + maxProductFormBytes
+	// maxProductUploadBytes allows as many new photos as one save may
+	// carry, with the form. Files past the first megabyte are spooled to
+	// disk while the form is parsed, not held in memory.
+	maxProductUploadBytes = domain.MaxNewPhotosPerSave*maxPhotoBytes + maxProductFormBytes
 
 	// productUploadTimeout replaces the server's 30-second read timeout
 	// when a product is saved: its photos go with it, and several over a
@@ -171,20 +172,81 @@ func parsePhotoOrder(v string) ([]domain.PhotoSlot, bool) {
 // takePhotoErrors moves the photo errors out of errs, which fieldErrors
 // collected, into lines that name the file. The general ones, such as the
 // photo limit, keep their message as it is.
+//
+// Until the form shows colours, the errors about them, which the form has
+// no place for, are listed here too: with one colour on screen, they can
+// only be about its photos or the colour list as a whole.
 func takePhotoErrors(errs map[string]string, fileNames []string) []string {
 	var lines []string
-	if msg, ok := errs["photos"]; ok {
-		lines = append(lines, msg)
-		delete(errs, "photos")
+	for _, field := range []string{"photos", domain.ColourField(0, "photos")} {
+		if msg, ok := errs[field]; ok {
+			lines = append(lines, msg)
+			delete(errs, field)
+		}
 	}
 	for i, name := range fileNames {
-		field := domain.PhotoErrorField(i)
+		field := domain.ColourField(0, domain.PhotoErrorField(i))
 		if msg, ok := errs[field]; ok {
 			lines = append(lines, name+": "+msg)
 			delete(errs, field)
 		}
 	}
+	var colourFields []string
+	for field := range errs {
+		if field == "colours" || strings.HasPrefix(field, "colours.") {
+			colourFields = append(colourFields, field)
+		}
+	}
+	slices.Sort(colourFields)
+	for _, field := range colourFields {
+		lines = append(lines, errs[field])
+		delete(errs, field)
+	}
 	return lines
+}
+
+// defaultColourName is the colour a product gets while the form does not
+// show colours yet: the same name migration 00008 gave every product that
+// existed before them.
+const defaultColourName = "Única"
+
+// formPhotos are the photos the form shows: the first colour's, the one
+// it edits until it shows colours.
+func formPhotos(p domain.Product) []domain.Image {
+	if len(p.Colours) == 0 {
+		return []domain.Image{}
+	}
+	return p.Colours[0].Images
+}
+
+// newProductColours is the colour edit of a product created from the
+// form: one colour, with the photos the form sent.
+func newProductColours(photos *domain.PhotoEdit) domain.ColoursEdit {
+	c := domain.ColourEdit{Name: defaultColourName}
+	if photos != nil {
+		c.Photos = *photos
+	}
+	return domain.ColoursEdit{Colours: []domain.ColourEdit{c}}
+}
+
+// editedColours is the colour edit of a product saved from the form: the
+// photo edit applies to the first colour, and every colour keeps its
+// name and stock as stored, since the form does not show them yet. A
+// product without colours gets one, so its photos have somewhere to go.
+func editedColours(current domain.Product, photos domain.PhotoEdit) *domain.ColoursEdit {
+	if len(current.Colours) == 0 {
+		e := newProductColours(&photos)
+		return &e
+	}
+	e := &domain.ColoursEdit{}
+	for i, c := range current.Colours {
+		ce := domain.ColourEdit{ID: c.ID, Name: c.Name, Stock: c.Stock, Photos: domain.PhotoEdit{AppendNew: true}}
+		if i == 0 {
+			ce.Photos = photos
+		}
+		e.Colours = append(e.Colours, ce)
+	}
+	return e
 }
 
 // shortName keeps a file name readable in a message: phones name photos

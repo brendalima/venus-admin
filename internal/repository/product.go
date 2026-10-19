@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +22,11 @@ var (
 
 const (
 	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, archived_at, created_at, updated_at`
-	imageColumns   = `id, product_id, key_600, key_1200, position, created_at`
 
-	pgUniqueViolation = "23505"
-	productsSlugKey   = "products_slug_key"
+	pgUniqueViolation     = "23505"
+	pgForeignKeyViolation = "23503"
+	productsSlugKey       = "products_slug_key"
+	coloursNameKey        = "product_colours_product_name_key"
 )
 
 type Product struct {
@@ -88,7 +91,7 @@ func (r *Product) list(ctx context.Context, query string) ([]domain.Product, err
 		return nil, fmt.Errorf("couldn't list products: %w", err)
 	}
 
-	if err := r.attachImages(ctx, products); err != nil {
+	if err := attachColours(ctx, r.db, products); err != nil {
 		return nil, err
 	}
 	return products, nil
@@ -110,6 +113,9 @@ func (r *Product) GetBySlug(ctx context.Context, slug string) (domain.Product, e
 // Create inserts the product and its images, in the order given, in one
 // transaction: a product never exists without the photos it was saved
 // with.
+// Create inserts the product with its colours, their photos and stock, in
+// the order given, in one transaction: a product never exists without what
+// it was saved with.
 func (r *Product) Create(ctx context.Context, p domain.Product) (domain.Product, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -132,49 +138,40 @@ func (r *Product) Create(ctx context.Context, p domain.Product) (domain.Product,
 		return domain.Product{}, translateWriteError(err, "couldn't create product")
 	}
 
-	images := make([]domain.Image, len(p.Images))
-	for i, img := range p.Images {
-		if images[i], err = insertImageRow(ctx, tx, p.ID, img, i); err != nil {
+	for i, c := range p.Colours {
+		if err := insertColour(ctx, tx, p.ID, c, i); err != nil {
 			return domain.Product{}, err
 		}
 	}
 
+	created := []domain.Product{p}
+	if err := attachColours(ctx, tx, created); err != nil {
+		return domain.Product{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Product{}, fmt.Errorf("couldn't commit product: %w", err)
 	}
-	p.Images = images
-	return p, nil
+	return created[0], nil
 }
 
 func (r *Product) Update(ctx context.Context, p domain.Product) (domain.Product, error) {
 	if uuid.Validate(p.ID) != nil {
 		return domain.Product{}, domain.NewNotFoundError("product not found")
 	}
-
-	err := r.db.QueryRowContext(ctx,
-		`UPDATE products
-		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
-		     details = $7, sold_out = $8, position = $9
-		 WHERE id = $1
-		 RETURNING archived_at, created_at, updated_at`,
-		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
-	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Product{}, domain.NewNotFoundError("product not found")
-	}
+	p, err := updateFields(ctx, r.db, p)
 	if err != nil {
-		return domain.Product{}, translateWriteError(err, "couldn't update product")
+		return domain.Product{}, err
 	}
 
-	// The caller's Images may be stale; return what is stored.
+	// The caller's Colours may be stale; return what is stored.
 	updated := []domain.Product{p}
-	if err := r.attachImages(ctx, updated); err != nil {
+	if err := attachColours(ctx, r.db, updated); err != nil {
 		return domain.Product{}, err
 	}
 	return updated[0], nil
 }
 
-func (r *Product) UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error) {
+func (r *Product) UpdateWithColours(ctx context.Context, p domain.Product, changes domain.ColourChanges) (domain.Product, []domain.Image, error) {
 	if uuid.Validate(p.ID) != nil {
 		return domain.Product{}, nil, domain.NewNotFoundError("product not found")
 	}
@@ -185,81 +182,131 @@ func (r *Product) UpdateWithImages(ctx context.Context, p domain.Product, added,
 	}
 	defer tx.Rollback()
 
-	err = tx.QueryRowContext(ctx,
-		`UPDATE products
-		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
-		     details = $7, sold_out = $8, position = $9
-		 WHERE id = $1
-		 RETURNING archived_at, created_at, updated_at`,
-		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
-	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Product{}, nil, domain.NewNotFoundError("product not found")
+	// Updating the product's row first also locks it, so a concurrent
+	// save of the same product waits and then sees this one's result
+	// rather than interleaving with it.
+	if p, err = updateFields(ctx, tx, p); err != nil {
+		return domain.Product{}, nil, err
 	}
-	if err != nil {
-		return domain.Product{}, nil, translateWriteError(err, "couldn't update product")
-	}
-
-	// Locked, so a concurrent save of the same product waits and then
-	// sees this one's result rather than interleaving with it.
-	current, err := lockImages(ctx, tx, p.ID)
+	current, err := lockColours(ctx, tx, p.ID)
 	if err != nil {
 		return domain.Product{}, nil, err
 	}
 
-	stale := domain.NewStaleError("photos changed since they were loaded")
-	isNew, toRemove, wanted := set(added), set(removed), map[string]bool{}
-	for _, img := range p.Images {
-		wanted[img.ID] = true
-		// A photo kept on screen but deleted meanwhile cannot be kept:
-		// its files are gone.
-		if _, exists := current[img.ID]; !exists && !isNew[img.ID] {
-			return domain.Product{}, nil, stale
-		}
+	gone, err := checkColourChanges(p.Colours, current, changes)
+	if err != nil {
+		return domain.Product{}, nil, err
 	}
-	var gone []domain.Image
-	for id, img := range current {
-		switch {
-		case wanted[id]:
-		case toRemove[id]:
-			gone = append(gone, img)
-		default: // added elsewhere, never shown to this person
-			return domain.Product{}, nil, stale
+	removedImages := set(changes.RemovedImages)
+	var goneFromKept []string
+	for _, img := range gone {
+		if removedImages[img.ID] {
+			goneFromKept = append(goneFromKept, img.ID)
 		}
 	}
 
-	for _, img := range gone {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM product_images WHERE id = $1`, img.ID); err != nil {
-			return domain.Product{}, nil, fmt.Errorf("couldn't delete image: %w", err)
+	// Removed photos and colours go first, freeing their names for the
+	// colours that follow. Deleting a colour takes its photos and stock by
+	// cascade; gone already holds those photos, read before they went.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_images WHERE id = ANY($1)`, nonNil(goneFromKept)); err != nil {
+		return domain.Product{}, nil, fmt.Errorf("couldn't delete images: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_colours WHERE id = ANY($1)`, nonNil(changes.RemovedColours)); err != nil {
+		return domain.Product{}, nil, fmt.Errorf("couldn't delete colours: %w", err)
+	}
+
+	// The unique index on names is checked row by row, so swapping two
+	// colours' names would clash halfway. Renamed colours step aside
+	// under their own ID first.
+	var renamed []string
+	for _, c := range p.Colours {
+		if stored, ok := current[c.ID]; ok && stored.Name != c.Name {
+			renamed = append(renamed, c.ID)
 		}
 	}
-	images := make([]domain.Image, len(p.Images))
-	for i, img := range p.Images {
-		stored, exists := current[img.ID]
+	if len(renamed) > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE product_colours SET name = id::text WHERE id = ANY($1)`, renamed,
+		); err != nil {
+			return domain.Product{}, nil, fmt.Errorf("couldn't rename colours: %w", err)
+		}
+	}
+
+	for i, c := range p.Colours {
+		stored, exists := current[c.ID]
 		if !exists {
-			if images[i], err = insertImageRow(ctx, tx, p.ID, img, i); err != nil {
+			if err := insertColour(ctx, tx, p.ID, c, i); err != nil {
 				return domain.Product{}, nil, err
 			}
 			continue
 		}
-		// Only rows whose place changes are written, so the change
-		// triggers fire for what really moved.
-		if int(stored.Position) != i {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE product_images SET position = $2 WHERE id = $1`, img.ID, i,
-			); err != nil {
-				return domain.Product{}, nil, fmt.Errorf("couldn't reorder image: %w", err)
-			}
-			stored.Position = int32(i)
+		if err := updateColour(ctx, tx, p.ID, stored, c, i); err != nil {
+			return domain.Product{}, nil, err
 		}
-		images[i] = stored
 	}
 
+	updated := []domain.Product{p}
+	if err := attachColours(ctx, tx, updated); err != nil {
+		return domain.Product{}, nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Product{}, nil, fmt.Errorf("couldn't commit product: %w", err)
 	}
-	p.Images = images
-	return p, gone, nil
+	return updated[0], gone, nil
+}
+
+// checkColourChanges compares the colours and photos wanted with the ones
+// stored, which changes says how to reconcile, and returns the photos that
+// will be gone: the ones removed, and every photo of a removed colour.
+// Anything wanted that is neither stored nor added, or stored and neither
+// wanted nor removed, means the product changed since it was read.
+func checkColourChanges(wanted []domain.Colour, current map[string]domain.Colour, changes domain.ColourChanges) ([]domain.Image, error) {
+	stale := domain.NewStaleError("colours or photos changed since they were loaded")
+	addedColours, removedColours := set(changes.AddedColours), set(changes.RemovedColours)
+	addedImages, removedImages := set(changes.AddedImages), set(changes.RemovedImages)
+
+	var gone []domain.Image
+	kept := map[string]bool{}
+	for _, c := range wanted {
+		kept[c.ID] = true
+		stored, exists := current[c.ID]
+		// A colour kept on screen but deleted meanwhile cannot be kept:
+		// its photos' files are gone.
+		if !exists && !addedColours[c.ID] {
+			return nil, stale
+		}
+
+		storedImages := map[string]bool{}
+		for _, img := range stored.Images {
+			storedImages[img.ID] = true
+		}
+		keptImages := map[string]bool{}
+		for _, img := range c.Images {
+			keptImages[img.ID] = true
+			if !storedImages[img.ID] && !addedImages[img.ID] {
+				return nil, stale
+			}
+		}
+		for _, img := range stored.Images {
+			switch {
+			case keptImages[img.ID]:
+			case removedImages[img.ID]:
+				gone = append(gone, img)
+			default: // added elsewhere, never shown to this person
+				return nil, stale
+			}
+		}
+	}
+	for id, c := range current {
+		switch {
+		case kept[id]:
+		case removedColours[id]:
+			gone = append(gone, c.Images...)
+		default:
+			return nil, stale
+		}
+	}
+	return gone, nil
 }
 
 // SetArchived takes the product out of the collection, or puts it back,
@@ -284,49 +331,161 @@ func (r *Product) SetArchived(ctx context.Context, id string, archived bool) (do
 	}
 
 	updated := []domain.Product{p}
-	if err := r.attachImages(ctx, updated); err != nil {
+	if err := attachColours(ctx, r.db, updated); err != nil {
 		return domain.Product{}, err
 	}
 	return updated[0], nil
 }
 
-// lockImages reads a product's image rows, by ID, holding them until the
-// transaction ends.
-func lockImages(ctx context.Context, tx *sql.Tx, productID string) (map[string]domain.Image, error) {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT `+imageColumns+` FROM product_images WHERE product_id = $1 FOR UPDATE`, productID)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't list product images: %w", err)
+// SetStock sets how many pieces of size a colour has, counting it from now
+// on if it was not counted.
+func (r *Product) SetStock(ctx context.Context, colourID, size string, quantity int32) error {
+	if uuid.Validate(colourID) != nil {
+		return domain.NewNotFoundError("colour not found")
 	}
-	defer rows.Close()
-
-	images := map[string]domain.Image{}
-	for rows.Next() {
-		var img domain.Image
-		if err := rows.Scan(&img.ID, &img.ProductID, &img.Key600, &img.Key1200, &img.Position, &img.CreatedAt); err != nil {
-			return nil, fmt.Errorf("couldn't read product image: %w", err)
-		}
-		images[img.ID] = img
+	err := upsertStock(ctx, r.db, colourID, domain.Stock{Size: size, Quantity: quantity})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		return domain.NewNotFoundError("colour not found")
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("couldn't list product images: %w", err)
-	}
-	return images, nil
+	return err
 }
 
-func insertImageRow(ctx context.Context, tx *sql.Tx, productID string, img domain.Image, position int) (domain.Image, error) {
-	img.ProductID = productID
-	img.Position = int32(position)
-	err := tx.QueryRowContext(ctx,
-		`INSERT INTO product_images (id, product_id, key_600, key_1200, position)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING created_at`,
-		img.ID, productID, img.Key600, img.Key1200, position,
-	).Scan(&img.CreatedAt)
-	if err != nil {
-		return domain.Image{}, fmt.Errorf("couldn't add image: %w", err)
+// updateFields saves the product's own fields, never archived_at, and
+// fills in what the database keeps.
+func updateFields(ctx context.Context, q querier, p domain.Product) (domain.Product, error) {
+	err := q.QueryRowContext(ctx,
+		`UPDATE products
+		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
+		     details = $7, sold_out = $8, position = $9
+		 WHERE id = $1
+		 RETURNING archived_at, created_at, updated_at`,
+		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
+	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
 	}
-	return img, nil
+	if err != nil {
+		return domain.Product{}, translateWriteError(err, "couldn't update product")
+	}
+	return p, nil
+}
+
+// lockColours reads a product's colours, with their photos and stock, by
+// ID, holding the rows until the transaction ends.
+func lockColours(ctx context.Context, tx *sql.Tx, productID string) (map[string]domain.Colour, error) {
+	colours, err := readColours(ctx, tx, []string{productID}, true)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.Colour, len(colours))
+	for _, c := range colours {
+		byID[c.ID] = c
+	}
+	return byID, nil
+}
+
+func insertColour(ctx context.Context, tx *sql.Tx, productID string, c domain.Colour, position int) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO product_colours (id, product_id, name, position) VALUES ($1, $2, $3, $4)`,
+		c.ID, productID, c.Name, position)
+	if err != nil {
+		return translateWriteError(err, "couldn't add colour")
+	}
+	for i, img := range c.Images {
+		if err := insertImage(ctx, tx, productID, c.ID, img, i); err != nil {
+			return err
+		}
+	}
+	for _, s := range c.Stock {
+		if err := upsertStock(ctx, tx, c.ID, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateColour makes the stored colour what c says. Only what really
+// changed is written, so the change triggers fire for that alone. Photos
+// in c that stored does not have are new; the removed ones are already
+// gone.
+func updateColour(ctx context.Context, tx *sql.Tx, productID string, stored, c domain.Colour, position int) error {
+	if stored.Name != c.Name || int(stored.Position) != position {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE product_colours SET name = $2, position = $3 WHERE id = $1`, c.ID, c.Name, position,
+		); err != nil {
+			return translateWriteError(err, "couldn't update colour")
+		}
+	}
+
+	storedImages := make(map[string]domain.Image, len(stored.Images))
+	for _, img := range stored.Images {
+		storedImages[img.ID] = img
+	}
+	for i, img := range c.Images {
+		was, exists := storedImages[img.ID]
+		if !exists {
+			if err := insertImage(ctx, tx, productID, c.ID, img, i); err != nil {
+				return err
+			}
+			continue
+		}
+		if int(was.Position) != i {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE product_images SET position = $2 WHERE id = $1`, img.ID, i,
+			); err != nil {
+				return fmt.Errorf("couldn't reorder image: %w", err)
+			}
+		}
+	}
+
+	storedStock := make(map[string]int32, len(stored.Stock))
+	for _, s := range stored.Stock {
+		storedStock[s.Size] = s.Quantity
+	}
+	for _, s := range c.Stock {
+		if q, ok := storedStock[s.Size]; ok && q == s.Quantity {
+			delete(storedStock, s.Size)
+			continue
+		}
+		delete(storedStock, s.Size)
+		if err := upsertStock(ctx, tx, c.ID, s); err != nil {
+			return err
+		}
+	}
+	for size := range storedStock { // no longer counted
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM product_variations WHERE colour_id = $1 AND size = $2`, c.ID, size,
+		); err != nil {
+			return fmt.Errorf("couldn't remove stock: %w", err)
+		}
+	}
+	return nil
+}
+
+// insertImage writes product_id as well as colour_id: the release before
+// colours reads photos by product_id, and migration 00008 keeps it filled
+// for as long as a rollback to that release is possible.
+func insertImage(ctx context.Context, tx *sql.Tx, productID, colourID string, img domain.Image, position int) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO product_images (id, product_id, colour_id, key_600, key_1200, position)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		img.ID, productID, colourID, img.Key600, img.Key1200, position)
+	if err != nil {
+		return fmt.Errorf("couldn't add image: %w", err)
+	}
+	return nil
+}
+
+func upsertStock(ctx context.Context, q querier, colourID string, s domain.Stock) error {
+	_, err := q.ExecContext(ctx,
+		`INSERT INTO product_variations (colour_id, size, quantity) VALUES ($1, $2, $3)
+		 ON CONFLICT (colour_id, size) DO UPDATE SET quantity = EXCLUDED.quantity`,
+		colourID, s.Size, s.Quantity)
+	if err != nil {
+		return fmt.Errorf("couldn't set stock: %w", err)
+	}
+	return nil
 }
 
 func set(ids []string) map[string]bool {
@@ -337,9 +496,9 @@ func set(ids []string) map[string]bool {
 	return m
 }
 
-// Delete removes the product and, by cascade, its image rows. The files in
-// the bucket are not the repository's to remove: the caller must read the keys
-// first if it wants them gone.
+// Delete removes the product and, by cascade, its colours, image rows and
+// stock. The files in the bucket are not the repository's to remove: the
+// caller must read the keys first if it wants them gone.
 func (r *Product) Delete(ctx context.Context, id string) error {
 	if uuid.Validate(id) != nil {
 		return domain.NewNotFoundError("product not found")
@@ -392,15 +551,23 @@ func (r *Product) getOne(ctx context.Context, query string, arg any) (domain.Pro
 	}
 
 	found := []domain.Product{p}
-	if err := r.attachImages(ctx, found); err != nil {
+	if err := attachColours(ctx, r.db, found); err != nil {
 		return domain.Product{}, err
 	}
 	return found[0], nil
 }
 
-// attachImages loads the images of every product in one query, instead of
-// one per product.
-func (r *Product) attachImages(ctx context.Context, products []domain.Product) error {
+// querier is what *sql.DB and *sql.Tx have in common, for code that runs
+// in a transaction or outside one.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// attachColours loads the colours of every product, with their photos and
+// stock, in three queries however many products there are.
+func attachColours(ctx context.Context, q querier, products []domain.Product) error {
 	if len(products) == 0 {
 		return nil
 	}
@@ -408,33 +575,124 @@ func (r *Product) attachImages(ctx context.Context, products []domain.Product) e
 	ids := make([]string, len(products))
 	byID := make(map[string]*domain.Product, len(products))
 	for i := range products {
-		products[i].Images = []domain.Image{}
+		products[i].Colours = []domain.Colour{}
 		ids[i] = products[i].ID
 		byID[products[i].ID] = &products[i]
 	}
 
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+imageColumns+` FROM product_images
-		 WHERE product_id = ANY($1)
-		 ORDER BY product_id, position, created_at, id`, ids)
+	colours, err := readColours(ctx, q, ids, false)
 	if err != nil {
-		return fmt.Errorf("couldn't list product images: %w", err)
+		return err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var img domain.Image
-		err := rows.Scan(&img.ID, &img.ProductID, &img.Key600, &img.Key1200, &img.Position, &img.CreatedAt)
-		if err != nil {
-			return fmt.Errorf("couldn't read product image: %w", err)
-		}
-		p := byID[img.ProductID]
-		p.Images = append(p.Images, img)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("couldn't list product images: %w", err)
+	for _, c := range colours {
+		p := byID[c.ProductID]
+		// Stock follows the product's sizes, the order the form and the
+		// site show them in.
+		slices.SortStableFunc(c.Stock, func(a, b domain.Stock) int {
+			return cmp.Compare(sizeRank(p.Sizes, a.Size), sizeRank(p.Sizes, b.Size))
+		})
+		p.Colours = append(p.Colours, c)
 	}
 	return nil
+}
+
+func sizeRank(sizes []string, size string) int {
+	if i := slices.Index(sizes, size); i >= 0 {
+		return i
+	}
+	return len(sizes)
+}
+
+// Image and stock rows are reached through their colour, so the lock on
+// them names the table: FOR UPDATE alone would lock the colours too, which
+// is harmless but says more than meant.
+const (
+	readColoursQuery = `SELECT id, product_id, name, position, created_at FROM product_colours
+		WHERE product_id = ANY($1)
+		ORDER BY product_id, position, created_at, id`
+	readImagesQuery = `SELECT i.id, i.colour_id, i.key_600, i.key_1200, i.position, i.created_at
+		FROM product_images i JOIN product_colours c ON c.id = i.colour_id
+		WHERE c.product_id = ANY($1)
+		ORDER BY i.colour_id, i.position, i.created_at, i.id`
+	readStockQuery = `SELECT v.colour_id, v.size, v.quantity
+		FROM product_variations v JOIN product_colours c ON c.id = v.colour_id
+		WHERE c.product_id = ANY($1)`
+)
+
+// readColours returns the colours of the products in productIDs, in
+// order, each with its photos and stock. With forUpdate, the rows stay
+// locked until the transaction ends.
+func readColours(ctx context.Context, q querier, productIDs []string, forUpdate bool) ([]domain.Colour, error) {
+	coloursQuery, imagesQuery, stockQuery := readColoursQuery, readImagesQuery, readStockQuery
+	if forUpdate {
+		coloursQuery += ` FOR UPDATE`
+		imagesQuery += ` FOR UPDATE OF i`
+		stockQuery += ` FOR UPDATE OF v`
+	}
+
+	var colours []domain.Colour
+	err := queryRows(ctx, q, coloursQuery, productIDs, func(rows *sql.Rows) error {
+		c := domain.Colour{Images: []domain.Image{}, Stock: []domain.Stock{}}
+		if err := rows.Scan(&c.ID, &c.ProductID, &c.Name, &c.Position, &c.CreatedAt); err != nil {
+			return err
+		}
+		colours = append(colours, c)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list colours: %w", err)
+	}
+	byID := make(map[string]*domain.Colour, len(colours))
+	for i := range colours {
+		byID[colours[i].ID] = &colours[i]
+	}
+
+	err = queryRows(ctx, q, imagesQuery, productIDs, func(rows *sql.Rows) error {
+		var img domain.Image
+		if err := rows.Scan(&img.ID, &img.ColourID, &img.Key600, &img.Key1200, &img.Position, &img.CreatedAt); err != nil {
+			return err
+		}
+		// A colour added between the two queries is not in byID; its
+		// photos are left for the next read, as the colour is.
+		if c, ok := byID[img.ColourID]; ok {
+			c.Images = append(c.Images, img)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list product images: %w", err)
+	}
+
+	err = queryRows(ctx, q, stockQuery, productIDs, func(rows *sql.Rows) error {
+		var colourID string
+		var s domain.Stock
+		if err := rows.Scan(&colourID, &s.Size, &s.Quantity); err != nil {
+			return err
+		}
+		if c, ok := byID[colourID]; ok {
+			c.Stock = append(c.Stock, s)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list stock: %w", err)
+	}
+	return colours, nil
+}
+
+// queryRows runs query with arg and hands each row to scan.
+func queryRows(ctx context.Context, q querier, query string, arg any, scan func(*sql.Rows) error) error {
+	rows, err := q.QueryContext(ctx, query, arg)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := scan(rows); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 type scanner interface {
@@ -463,8 +721,13 @@ func (t *nullTime) Scan(src any) error {
 
 func translateWriteError(err error, action string) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == productsSlugKey {
-		return domain.NewConflictError("slug already in use")
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+		switch pgErr.ConstraintName {
+		case productsSlugKey:
+			return domain.NewConflictError(domain.ConflictSlug)
+		case coloursNameKey:
+			return domain.NewConflictError(domain.ConflictColourName)
+		}
 	}
 	return fmt.Errorf("%s: %w", action, err)
 }

@@ -44,9 +44,9 @@ type PasswordResetService interface {
 	Reset(ctx context.Context, token, password string) (domain.User, error)
 }
 
-// ProductService manages the catalogue. A product's photos are saved
-// with it: Create and Update apply a photo edit together with the fields,
-// all or nothing.
+// ProductService manages the catalogue. A product's colours, with their
+// photos and stock, are saved with it: Create and Update apply a colour
+// edit together with the fields, all or nothing.
 type ProductService interface {
 	// List returns the collection, which is what the site shows: archived
 	// products are left out.
@@ -58,23 +58,30 @@ type ProductService interface {
 	GetByID(ctx context.Context, id string) (domain.Product, error)
 
 	// Create derives the slug from the name, places the product at the
-	// end of the catalogue, and adds the photos in photos, which may be
-	// nil. Invalid input comes back as joined *domain.ValidationError,
-	// one per field and one per new photo that is not usable
-	// (domain.PhotoErrorField), all at once.
-	Create(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error)
+	// end of the catalogue, and gives it colours, which must hold at
+	// least one. Invalid input comes back as joined
+	// *domain.ValidationError, one per field and one per new photo that
+	// is not usable (domain.ColourField with domain.PhotoErrorField), all
+	// at once.
+	Create(ctx context.Context, p domain.Product, colours domain.ColoursEdit) (domain.Product, error)
 
 	// Update keeps the product's place in the catalogue. The slug only
 	// changes when p.Slug asks for it; an empty one is derived from the
-	// name again. A nil photos leaves the photos as they are. A photo
-	// list that changed elsewhere since it was loaded comes back as
-	// *domain.StaleError, with nothing saved.
-	Update(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error)
+	// name again. A nil colours leaves the colours, photos and stock as
+	// they are. Colours or photos that changed elsewhere since they were
+	// loaded come back as *domain.StaleError, with nothing saved.
+	Update(ctx context.Context, p domain.Product, colours *domain.ColoursEdit) (domain.Product, error)
 
 	SetSoldOut(ctx context.Context, id string, soldOut bool) (domain.Product, error)
 
+	// SetStock sets how many pieces of size the colour has, as the list's
+	// quick buttons do: the quantity wanted, not a change, so a double tap
+	// asks for the same thing twice. The size must be one of the
+	// product's.
+	SetStock(ctx context.Context, productID, colourID, size string, quantity int32) (domain.Product, error)
+
 	// SetArchived takes the product out of the collection, keeping its
-	// photos, or puts it back where it was.
+	// colours, photos and stock, or puts it back where it was.
 	SetArchived(ctx context.Context, id string, archived bool) (domain.Product, error)
 
 	// Delete removes the product and its photo files.

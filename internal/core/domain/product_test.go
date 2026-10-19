@@ -32,9 +32,12 @@ func TestCover(t *testing.T) {
 		t.Error("a product with no images has no cover")
 	}
 
-	p := Product{Images: []Image{
-		{Key600: "first"},
-		{Key600: "second"},
+	// The first colour may have no photos yet; the cover is then the
+	// next one's.
+	p := Product{Colours: []Colour{
+		{Name: "Bege"},
+		{Name: "Vinho", Images: []Image{{Key600: "first"}, {Key600: "second"}}},
+		{Name: "Verde", Images: []Image{{Key600: "third"}}},
 	}}
 	cover, ok := p.Cover()
 	if !ok {
@@ -42,6 +45,17 @@ func TestCover(t *testing.T) {
 	}
 	if cover.Key600 != "first" {
 		t.Errorf("cover = %q, want the first image", cover.Key600)
+	}
+
+	var keys []string
+	for _, img := range p.Images() {
+		keys = append(keys, img.Key600)
+	}
+	if !slices.Equal(keys, []string{"first", "second", "third"}) {
+		t.Errorf("images = %v, want every colour's, in order", keys)
+	}
+	if empty.Images() == nil {
+		t.Error("images of a product without colours is nil, want an empty list")
 	}
 }
 

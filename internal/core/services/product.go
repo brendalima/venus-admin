@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -66,33 +67,27 @@ func (s *Product) GetByID(ctx context.Context, id string) (domain.Product, error
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *Product) Create(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+func (s *Product) Create(ctx context.Context, p domain.Product, colours domain.ColoursEdit) (domain.Product, error) {
 	p = p.Normalized()
 	p.ID = uuid.New().String()
 	p.Slug = domain.Slugify(p.Name)
 
-	prepared, err := s.preparePhotos(ctx, nil, photos, p.Validate())
+	prepared, err := s.prepareColours(ctx, nil, colours, p.Sizes, p.Validate())
 	if err != nil {
 		return domain.Product{}, err
 	}
-	p.Images = prepared.images
+	p.Colours = prepared.colours
 
 	created, err := s.repo.Create(ctx, p)
 	if err != nil {
 		s.deleteFiles(ctx, prepared.stored...)
-	}
-	var conflict *domain.ConflictError
-	if errors.As(err, &conflict) {
 		// The slug comes from the name, so the name is what to change.
-		return domain.Product{}, domain.NewValidationError("name", "Já existe uma peça com esse nome. Escolha outro.")
-	}
-	if err != nil {
-		return domain.Product{}, fmt.Errorf("couldn't create product: %w", err)
+		return domain.Product{}, saveError(err, "name", "Já existe uma peça com esse nome. Escolha outro.", "couldn't create product")
 	}
 	return created, nil
 }
 
-func (s *Product) Update(ctx context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+func (s *Product) Update(ctx context.Context, p domain.Product, colours *domain.ColoursEdit) (domain.Product, error) {
 	p = p.Normalized()
 	// Typed by hand under "advanced options", so it is cleaned the same
 	// way a name is: "Biquíni Novo" becomes "biquini-novo".
@@ -101,7 +96,7 @@ func (s *Product) Update(ctx context.Context, p domain.Product, photos *domain.P
 		p.Slug = domain.Slugify(p.Name)
 	}
 	fieldErr := p.Validate()
-	if fieldErr != nil && photos == nil {
+	if fieldErr != nil && colours == nil {
 		return domain.Product{}, fieldErr
 	}
 
@@ -113,31 +108,44 @@ func (s *Product) Update(ctx context.Context, p domain.Product, photos *domain.P
 
 	var updated domain.Product
 	var gone []domain.Image
-	if photos == nil {
+	if colours == nil {
 		updated, err = s.repo.Update(ctx, p)
 	} else {
-		var prepared preparedPhotos
-		if prepared, err = s.preparePhotos(ctx, current.Images, photos, fieldErr); err != nil {
+		var prepared preparedColours
+		if prepared, err = s.prepareColours(ctx, current.Colours, *colours, p.Sizes, fieldErr); err != nil {
 			return domain.Product{}, err
 		}
-		p.Images = prepared.images
-		updated, gone, err = s.repo.UpdateWithImages(ctx, p, prepared.added, prepared.removed)
+		p.Colours = prepared.colours
+		updated, gone, err = s.repo.UpdateWithColours(ctx, p, prepared.changes)
 		if err != nil {
 			s.deleteFiles(ctx, prepared.stored...)
 		}
 	}
-	var conflict *domain.ConflictError
-	if errors.As(err, &conflict) {
-		return domain.Product{}, domain.NewValidationError("slug", "Já existe outra peça com esse endereço. Escolha outro.")
-	}
 	if err != nil {
-		return domain.Product{}, fmt.Errorf("couldn't update product %s: %w", p.ID, err)
+		return domain.Product{}, saveError(err, "slug", "Já existe outra peça com esse endereço. Escolha outro.",
+			"couldn't update product "+p.ID)
 	}
 
 	for _, img := range gone {
 		s.deleteFiles(ctx, img.Key600, img.Key1200)
 	}
 	return updated, nil
+}
+
+// saveError turns a uniqueness clash into a message on the field to
+// change, slugField with slugMessage for the address, and wraps anything
+// else with action.
+func saveError(err error, slugField, slugMessage, action string) error {
+	var conflict *domain.ConflictError
+	if errors.As(err, &conflict) {
+		switch conflict.Subject {
+		case domain.ConflictSlug:
+			return domain.NewValidationError(slugField, slugMessage)
+		case domain.ConflictColourName:
+			return domain.NewValidationError("colours", "Já existe outra cor com esse nome nesta peça")
+		}
+	}
+	return fmt.Errorf("%s: %w", action, err)
 }
 
 func (s *Product) SetSoldOut(ctx context.Context, id string, soldOut bool) (domain.Product, error) {
@@ -157,6 +165,38 @@ func (s *Product) SetSoldOut(ctx context.Context, id string, soldOut bool) (doma
 		return domain.Product{}, fmt.Errorf("couldn't update product %s: %w", id, err)
 	}
 	return updated, nil
+}
+
+func (s *Product) SetStock(ctx context.Context, productID, colourID, size string, quantity int32) (domain.Product, error) {
+	p, err := s.repo.GetByID(ctx, productID)
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't load product %s: %w", productID, err)
+	}
+	i := slices.IndexFunc(p.Colours, func(c domain.Colour) bool { return c.ID == colourID })
+	if i < 0 {
+		return domain.Product{}, domain.NewNotFoundError("colour not found")
+	}
+	// The size comes from a URL: only the product's own are counted.
+	if !slices.Contains(p.Sizes, size) {
+		return domain.Product{}, domain.NewValidationError("size", "Essa peça não tem o tamanho "+size)
+	}
+	switch {
+	case quantity < 0:
+		return domain.Product{}, domain.NewValidationError("quantity", "A quantidade não pode ser negativa")
+	case quantity > domain.MaxQuantity:
+		return domain.Product{}, domain.NewValidationError("quantity",
+			fmt.Sprintf("A quantidade passa de %d. Confira o número.", domain.MaxQuantity))
+	}
+	if slices.Contains(p.Colours[i].Stock, domain.Stock{Size: size, Quantity: quantity}) {
+		// Already as asked, as after a double tap: nothing to write, and
+		// no change for the publish badge to report.
+		return p, nil
+	}
+
+	if err := s.repo.SetStock(ctx, colourID, size, quantity); err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't set stock of colour %s: %w", colourID, err)
+	}
+	return s.repo.GetByID(ctx, productID)
 }
 
 func (s *Product) SetArchived(ctx context.Context, id string, archived bool) (domain.Product, error) {
@@ -188,61 +228,62 @@ func (s *Product) Delete(ctx context.Context, id string) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("couldn't delete product %s: %w", id, err)
 	}
-	for _, img := range p.Images {
+	for _, img := range p.Images() {
 		s.deleteFiles(ctx, img.Key600, img.Key1200)
 	}
 	return nil
 }
 
-// preparedPhotos is a photo edit ready to be saved: the final list, and
+// preparedColours is a colour edit ready to be saved: the final list, and
 // what changed.
-type preparedPhotos struct {
-	images  []domain.Image // in order, cover first
-	added   []string       // IDs of the images in images that are new
-	removed []string       // IDs of existing images to delete
-	stored  []string       // keys of the files stored for the new ones
+type preparedColours struct {
+	colours []domain.Colour // in order, each with its photos and stock
+	changes domain.ColourChanges
+	stored  []string // keys of the files stored for the new photos
 }
 
-// preparePhotos checks edit against the photos the product has now,
-// processes the new ones and stores their files. Every problem is
+// prepareColours checks edit against the colours the product has now,
+// processes the new photos and stores their files. Every problem is
 // reported at once, together with fieldErr, the product's own validation:
 // one save tells the person everything to fix. Nothing is stored unless
 // all of it is valid; once something is, the caller must delete stored if
 // the save then fails.
-func (s *Product) preparePhotos(ctx context.Context, current []domain.Image, edit *domain.PhotoEdit, fieldErr error) (preparedPhotos, error) {
-	if edit == nil {
-		return preparedPhotos{images: current}, fieldErr
+func (s *Product) prepareColours(ctx context.Context, current []domain.Colour, edit domain.ColoursEdit, sizes []string, fieldErr error) (preparedColours, error) {
+	e := edit.Normalized(sizes)
+	byID := make(map[string]domain.Colour, len(current))
+	for _, c := range current {
+		byID[c.ID] = c
 	}
-	e := *edit
-	if e.AppendNew {
-		e.Order = make([]domain.PhotoSlot, 0, len(current)+len(e.New))
-		for _, img := range current {
-			e.Order = append(e.Order, domain.PhotoSlot{ImageID: img.ID})
+	for n, c := range e.Colours {
+		if c.Photos.AppendNew {
+			e.Colours[n].Photos = appendNew(byID[c.ID].Images, c.Photos)
 		}
-		for i := range e.New {
-			e.Order = append(e.Order, domain.PhotoSlot{NewIndex: i})
-		}
-		e.Removed, e.AppendNew = nil, false
 	}
-	if err := e.Validate(); err != nil {
-		return preparedPhotos{}, errors.Join(fieldErr, err)
+	if err := e.ValidateLists(); err != nil {
+		return preparedColours{}, errors.Join(fieldErr, e.Validate(), err)
 	}
+	// Names and quantities are reported together with the photos'
+	// problems, which takes processing them first.
+	fieldErr = errors.Join(fieldErr, e.Validate())
 
 	// Checked here too, not only in the repository's transaction, so a
 	// stale screen is turned away before any photo is processed.
-	byID := make(map[string]domain.Image, len(current))
-	for _, img := range current {
-		byID[img.ID] = img
-	}
+	stale := domain.NewStaleError("colours or photos changed since they were loaded")
 	mentioned := 0
-	for _, slot := range e.Order {
-		if slot.ImageID == "" {
+	for _, c := range e.Colours {
+		if c.Blank() {
 			continue
 		}
-		if _, ok := byID[slot.ImageID]; !ok {
-			return preparedPhotos{}, domain.NewStaleError("photos changed since they were loaded")
+		stored, exists := byID[c.ID]
+		if c.ID != "" {
+			if !exists {
+				return preparedColours{}, stale
+			}
+			mentioned++
 		}
-		mentioned++
+		if !photosMatch(stored.Images, c.Photos) {
+			return preparedColours{}, stale
+		}
 	}
 	for _, id := range e.Removed {
 		if _, ok := byID[id]; ok {
@@ -250,63 +291,125 @@ func (s *Product) preparePhotos(ctx context.Context, current []domain.Image, edi
 		}
 	}
 	if mentioned != len(current) {
-		return preparedPhotos{}, domain.NewStaleError("photos changed since they were loaded")
+		return preparedColours{}, stale
 	}
 
 	// One at a time, original read and dropped as it goes: a dozen phone
 	// photos would not fit in memory together. Only the small results
 	// are kept.
 	type processed struct{ small, large []byte }
-	results := make([]processed, len(e.New))
+	results := make([][]processed, len(e.Colours))
 	var errs []error
-	for i, src := range e.New {
-		original, err := src.Bytes()
-		if err != nil {
-			return preparedPhotos{}, fmt.Errorf("couldn't read new photo %d: %w", i, err)
-		}
-		small, large, err := s.processor.Process(ctx, original)
-		var invalid *domain.ValidationError
-		if errors.As(err, &invalid) {
-			errs = append(errs, domain.NewValidationError(domain.PhotoErrorField(i), invalid.Message))
+	for n, c := range e.Colours {
+		if c.Blank() {
 			continue
 		}
-		if err != nil {
-			return preparedPhotos{}, fmt.Errorf("couldn't process new photo %d: %w", i, err)
+		results[n] = make([]processed, len(c.Photos.New))
+		for i, src := range c.Photos.New {
+			original, err := src.Bytes()
+			if err != nil {
+				return preparedColours{}, fmt.Errorf("couldn't read new photo %d of colour %d: %w", i, n, err)
+			}
+			small, large, err := s.processor.Process(ctx, original)
+			var invalid *domain.ValidationError
+			if errors.As(err, &invalid) {
+				errs = append(errs, domain.NewValidationError(domain.ColourField(n, domain.PhotoErrorField(i)), invalid.Message))
+				continue
+			}
+			if err != nil {
+				return preparedColours{}, fmt.Errorf("couldn't process new photo %d of colour %d: %w", i, n, err)
+			}
+			results[n][i] = processed{small: small, large: large}
 		}
-		results[i] = processed{small: small, large: large}
 	}
 	if fieldErr != nil || len(errs) > 0 {
-		return preparedPhotos{}, errors.Join(append([]error{fieldErr}, errs...)...)
+		return preparedColours{}, errors.Join(append([]error{fieldErr}, errs...)...)
 	}
 
-	newImages := make([]domain.Image, len(e.New))
-	var stored []string
-	for i, r := range results {
-		id := uuid.New().String()
-		img := domain.Image{ID: id, Key600: "produtos/" + id + "-600.jpg", Key1200: "produtos/" + id + "-1200.jpg"}
-		if err := s.store.Put(ctx, img.Key1200, r.large, imageContentType); err != nil {
-			s.deleteFiles(ctx, stored...)
-			return preparedPhotos{}, fmt.Errorf("couldn't store photo %s: %w", id, err)
-		}
-		stored = append(stored, img.Key1200)
-		if err := s.store.Put(ctx, img.Key600, r.small, imageContentType); err != nil {
-			s.deleteFiles(ctx, stored...)
-			return preparedPhotos{}, fmt.Errorf("couldn't store photo %s: %w", id, err)
-		}
-		stored = append(stored, img.Key600)
-		newImages[i] = img
-	}
-
-	out := preparedPhotos{removed: e.Removed, stored: stored, images: make([]domain.Image, len(e.Order))}
-	for i, slot := range e.Order {
-		if slot.ImageID != "" {
-			out.images[i] = byID[slot.ImageID]
+	out := preparedColours{colours: []domain.Colour{}}
+	for n, c := range e.Colours {
+		if c.Blank() {
 			continue
 		}
-		out.images[i] = newImages[slot.NewIndex]
-		out.added = append(out.added, newImages[slot.NewIndex].ID)
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock}
+		if colour.ID == "" {
+			colour.ID = uuid.New().String()
+			out.changes.AddedColours = append(out.changes.AddedColours, colour.ID)
+		}
+
+		newImages := make([]domain.Image, len(results[n]))
+		for i, r := range results[n] {
+			id := uuid.New().String()
+			img := domain.Image{ID: id, Key600: "produtos/" + id + "-600.jpg", Key1200: "produtos/" + id + "-1200.jpg"}
+			if err := s.store.Put(ctx, img.Key1200, r.large, imageContentType); err != nil {
+				s.deleteFiles(ctx, out.stored...)
+				return preparedColours{}, fmt.Errorf("couldn't store photo %s: %w", id, err)
+			}
+			out.stored = append(out.stored, img.Key1200)
+			if err := s.store.Put(ctx, img.Key600, r.small, imageContentType); err != nil {
+				s.deleteFiles(ctx, out.stored...)
+				return preparedColours{}, fmt.Errorf("couldn't store photo %s: %w", id, err)
+			}
+			out.stored = append(out.stored, img.Key600)
+			newImages[i] = img
+		}
+
+		storedImages := map[string]domain.Image{}
+		for _, img := range byID[c.ID].Images {
+			storedImages[img.ID] = img
+		}
+		colour.Images = make([]domain.Image, len(c.Photos.Order))
+		for i, slot := range c.Photos.Order {
+			if slot.ImageID != "" {
+				colour.Images[i] = storedImages[slot.ImageID]
+				continue
+			}
+			colour.Images[i] = newImages[slot.NewIndex]
+			out.changes.AddedImages = append(out.changes.AddedImages, newImages[slot.NewIndex].ID)
+		}
+		out.changes.RemovedImages = append(out.changes.RemovedImages, c.Photos.Removed...)
+		out.colours = append(out.colours, colour)
 	}
+	out.changes.RemovedColours = e.Removed
 	return out, nil
+}
+
+// appendNew resolves an AppendNew edit, which keeps the photos there are
+// and adds the new ones after them, into the order it stands for.
+func appendNew(current []domain.Image, e domain.PhotoEdit) domain.PhotoEdit {
+	order := make([]domain.PhotoSlot, 0, len(current)+len(e.New))
+	for _, img := range current {
+		order = append(order, domain.PhotoSlot{ImageID: img.ID})
+	}
+	for i := range e.New {
+		order = append(order, domain.PhotoSlot{NewIndex: i})
+	}
+	return domain.PhotoEdit{Order: order, New: e.New}
+}
+
+// photosMatch reports whether e accounts for exactly the photos stored,
+// each kept or removed, and keeps none that is not.
+func photosMatch(stored []domain.Image, e domain.PhotoEdit) bool {
+	has := make(map[string]bool, len(stored))
+	for _, img := range stored {
+		has[img.ID] = true
+	}
+	mentioned := 0
+	for _, slot := range e.Order {
+		if slot.ImageID == "" {
+			continue
+		}
+		if !has[slot.ImageID] {
+			return false
+		}
+		mentioned++
+	}
+	for _, id := range e.Removed {
+		if has[id] {
+			mentioned++
+		}
+	}
+	return mentioned == len(stored)
 }
 
 // deleteFiles removes files nothing points at any more. A failure leaves

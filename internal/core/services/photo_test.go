@@ -83,17 +83,43 @@ func newTestProductService(repo *mockProductRepository) *Product {
 	return MustNewProduct(ProductInput{Repo: repo, Store: newMockImageStore(), Processor: &mockProcessor{}})
 }
 
-// withImages is existing with stored photos a, b and c, in that order.
+// withImages is existing with stored photos a, b and c in its colour, in
+// that order.
 func withImages(f *photoFixture) (domain.Image, domain.Image, domain.Image) {
+	images := addImages(f, 0, "a", "b", "c")
+	return images[0], images[1], images[2]
+}
+
+// addImages stores photos with the names given in the colour at index n
+// of existing.
+func addImages(f *photoFixture, n int, names ...string) []domain.Image {
 	p := f.repo.products[existing.ID]
-	for _, name := range []string{"a", "b", "c"} {
-		img := domain.Image{ID: uuid.New().String(), Key600: name + "-600", Key1200: name + "-1200"}
-		p.Images = append(p.Images, img)
+	c := &p.Colours[n]
+	for _, name := range names {
+		img := domain.Image{ID: uuid.New().String(), ColourID: c.ID, Key600: name + "-600", Key1200: name + "-1200"}
+		c.Images = append(c.Images, img)
 		f.store.files[img.Key600], f.store.files[img.Key1200] = "x", "x"
 	}
 	f.repo.products[existing.ID] = p
-	return p.Images[0], p.Images[1], p.Images[2]
+	return c.Images
 }
+
+// newWithPhotos is a colour edit for a new product, with one colour and
+// the photo edit given.
+func newWithPhotos(e *domain.PhotoEdit) domain.ColoursEdit {
+	return domain.ColoursEdit{Colours: []domain.ColourEdit{{Name: "Bege", Photos: *e}}}
+}
+
+// photosOf is a colour edit for existing that keeps its one colour and
+// applies e to its photos.
+func photosOf(e *domain.PhotoEdit) *domain.ColoursEdit {
+	c := existing.Colours[0]
+	return &domain.ColoursEdit{Colours: []domain.ColourEdit{{ID: c.ID, Name: c.Name, Photos: *e}}}
+}
+
+// photoField is the field of an error about new photo i of the first
+// colour.
+func photoField(i int) string { return domain.ColourField(0, domain.PhotoErrorField(i)) }
 
 func ids(images []domain.Image) []string {
 	out := make([]string, len(images))
@@ -110,14 +136,14 @@ func TestCreateWithPhotos(t *testing.T) {
 		New:   []domain.PhotoSource{source("one"), source("two")},
 	}
 
-	p, err := f.service.Create(context.Background(), validInput(), edit)
+	p, err := f.service.Create(context.Background(), validInput(), newWithPhotos(edit))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Images) != 2 {
-		t.Fatalf("%d images, want 2", len(p.Images))
+	if len(p.Images()) != 2 {
+		t.Fatalf("%d images, want 2", len(p.Images()))
 	}
-	cover := p.Images[0]
+	cover := p.Images()[0]
 	if f.store.files[cover.Key1200] != "image/jpeg:large two" || f.store.files[cover.Key600] != "image/jpeg:small two" {
 		t.Errorf("the cover is not the second file: %q", f.store.files[cover.Key1200])
 	}
@@ -133,24 +159,28 @@ func TestUpdateWithPhotos(t *testing.T) {
 	in.Name = "Biquíni Aurora Novo"
 
 	// c becomes the cover, b goes, a new photo goes in the middle.
-	updated, err := f.service.Update(context.Background(), in, &domain.PhotoEdit{
+	updated, err := f.service.Update(context.Background(), in, photosOf(&domain.PhotoEdit{
 		Order:   []domain.PhotoSlot{{ImageID: c.ID}, {NewIndex: 0}, {ImageID: a.ID}},
 		Removed: []string{b.ID},
 		New:     []domain.PhotoSource{source("new")},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated.Name != "Biquíni Aurora Novo" {
 		t.Errorf("name = %q", updated.Name)
 	}
-	if got := ids(updated.Images); len(got) != 3 || got[0] != c.ID || got[2] != a.ID {
+	if got := ids(updated.Images()); len(got) != 3 || got[0] != c.ID || got[2] != a.ID {
 		t.Errorf("order %v, want [c new a]", got)
+	}
+	newID := updated.Images()[1].ID
+	if got := f.repo.changes; !slices.Equal(got.AddedImages, []string{newID}) || !slices.Equal(got.RemovedImages, []string{b.ID}) {
+		t.Errorf("changes %+v, want the new photo added and b removed", got)
 	}
 	if _, ok := f.store.files[b.Key600]; ok {
 		t.Error("the removed photo's files are still stored")
 	}
-	if f.store.files[updated.Images[1].Key1200] != "image/jpeg:large new" {
+	if f.store.files[updated.Images()[1].Key1200] != "image/jpeg:large new" {
 		t.Error("the new photo was not stored")
 	}
 }
@@ -159,14 +189,14 @@ func TestUpdateAppendsWithoutJavaScript(t *testing.T) {
 	f := newPhotoFixture(existing)
 	a, b, c := withImages(f)
 
-	updated, err := f.service.Update(context.Background(), existing, &domain.PhotoEdit{
+	updated, err := f.service.Update(context.Background(), existing, photosOf(&domain.PhotoEdit{
 		AppendNew: true,
 		New:       []domain.PhotoSource{source("new")},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(updated.Images); len(got) != 4 || !slices.Equal(got[:3], []string{a.ID, b.ID, c.ID}) {
+	if got := ids(updated.Images()); len(got) != 4 || !slices.Equal(got[:3], []string{a.ID, b.ID, c.ID}) {
 		t.Errorf("order %v, want a, b, c and the new one last", got)
 	}
 }
@@ -179,7 +209,7 @@ func TestUpdateWithoutPhotosLeavesThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(updated.Images); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
+	if got := ids(updated.Images()); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
 		t.Errorf("order %v, want them untouched", got)
 	}
 }
@@ -207,7 +237,7 @@ func TestPhotoEditNothingSaved(t *testing.T) {
 					New:   []domain.PhotoSource{source("good"), source(notAPhoto)},
 				}
 			},
-			wantFields: []string{domain.PhotoErrorField(1)}, wantProcessed: 1,
+			wantFields: []string{photoField(1)}, wantProcessed: 1,
 		},
 		{
 			// Both problems at once: a single save says everything to fix.
@@ -219,7 +249,7 @@ func TestPhotoEditNothingSaved(t *testing.T) {
 					New:   []domain.PhotoSource{source(notAPhoto)},
 				}
 			},
-			wantFields: []string{"name", domain.PhotoErrorField(0)},
+			wantFields: []string{"name", photoField(0)},
 		},
 		{
 			name: "a photo added elsewhere",
@@ -239,13 +269,13 @@ func TestPhotoEditNothingSaved(t *testing.T) {
 			name: "too many photos",
 			edit: func(a, b, c domain.Image) *domain.PhotoEdit {
 				e := &domain.PhotoEdit{Order: keepAll(a, b, c)}
-				for i := range domain.MaxImages {
+				for i := range domain.MaxImagesPerColour {
 					e.New = append(e.New, source("p"))
 					e.Order = append(e.Order, domain.PhotoSlot{NewIndex: i})
 				}
 				return e
 			},
-			wantFields: []string{"photos"},
+			wantFields: []string{domain.ColourField(0, "photos")},
 		},
 		{
 			name: "storage fails midway",
@@ -283,7 +313,7 @@ func TestPhotoEditNothingSaved(t *testing.T) {
 				in = tt.input(in)
 			}
 
-			_, err := f.service.Update(context.Background(), in, tt.edit(a, b, c))
+			_, err := f.service.Update(context.Background(), in, photosOf(tt.edit(a, b, c)))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -322,7 +352,7 @@ func TestPhotoEditNothingSaved(t *testing.T) {
 			if f.repo.writes != 0 && tt.repoErr == nil {
 				t.Errorf("%d writes reached the repository", f.repo.writes)
 			}
-			if got := ids(f.repo.products[existing.ID].Images); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
+			if got := ids(f.repo.products[existing.ID].Images()); !slices.Equal(got, []string{a.ID, b.ID, c.ID}) {
 				t.Errorf("photos %v, want them untouched", got)
 			}
 			if len(f.store.files) != files {
@@ -348,14 +378,14 @@ func TestRemovedPhotoFilesFailingToDeleteDoNotFailTheSave(t *testing.T) {
 	a, b, c := withImages(f)
 	f.store.deleteErr = errors.New("r2 unreachable")
 
-	updated, err := f.service.Update(context.Background(), existing, &domain.PhotoEdit{
+	updated, err := f.service.Update(context.Background(), existing, photosOf(&domain.PhotoEdit{
 		Order:   []domain.PhotoSlot{{ImageID: a.ID}, {ImageID: c.ID}},
 		Removed: []string{b.ID},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("the save failed because of an orphan file: %v", err)
 	}
-	if got := ids(updated.Images); !slices.Equal(got, []string{a.ID, c.ID}) {
+	if got := ids(updated.Images()); !slices.Equal(got, []string{a.ID, c.ID}) {
 		t.Errorf("order %v, want [a c]", got)
 	}
 }

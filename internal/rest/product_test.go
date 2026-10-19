@@ -28,7 +28,9 @@ type mockProductService struct {
 	created  []domain.Product
 	updated  []domain.Product
 	photoErr error               // returned by Create and Update when a photo edit is sent
-	edits    []*domain.PhotoEdit // every photo edit received, nil included
+	edits    []*domain.PhotoEdit // the first colour's photo edit of every save, nil included
+
+	colourEdits []*domain.ColoursEdit // every colour edit received, nil included
 }
 
 func newMockProductService() *mockProductService {
@@ -84,7 +86,12 @@ func (m *mockProductService) GetByID(_ context.Context, id string) (domain.Produ
 	return p, nil
 }
 
-func (m *mockProductService) Create(_ context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+func (m *mockProductService) Create(_ context.Context, p domain.Product, colours domain.ColoursEdit) (domain.Product, error) {
+	m.colourEdits = append(m.colourEdits, &colours)
+	var photos *domain.PhotoEdit
+	if len(colours.Colours) > 0 {
+		photos = &colours.Colours[0].Photos
+	}
 	m.edits = append(m.edits, photos)
 	p = p.Normalized()
 	p.Slug = domain.Slugify(p.Name)
@@ -96,13 +103,20 @@ func (m *mockProductService) Create(_ context.Context, p domain.Product, photos 
 		return domain.Product{}, m.writeErr
 	}
 	p.ID = fmt.Sprintf("new-%d", len(m.created)+1)
-	p.Images = images
+	p.Colours = []domain.Colour{{ID: p.ID + "-colour", Name: colours.Colours[0].Name, Images: images}}
 	m.created = append(m.created, p)
 	m.products[p.ID] = p
 	return p, nil
 }
 
-func (m *mockProductService) Update(_ context.Context, p domain.Product, photos *domain.PhotoEdit) (domain.Product, error) {
+// Update applies the edit of the first colour's photos alone, which is
+// all the form can send for now.
+func (m *mockProductService) Update(_ context.Context, p domain.Product, colours *domain.ColoursEdit) (domain.Product, error) {
+	m.colourEdits = append(m.colourEdits, colours)
+	var photos *domain.PhotoEdit
+	if colours != nil {
+		photos = &colours.Colours[0].Photos
+	}
 	m.edits = append(m.edits, photos)
 	p = p.Normalized()
 	if p.Slug = domain.Slugify(p.Slug); p.Slug == "" {
@@ -112,14 +126,21 @@ func (m *mockProductService) Update(_ context.Context, p domain.Product, photos 
 	if !ok {
 		return domain.Product{}, fmt.Errorf("couldn't load product: %w", domain.NewNotFoundError("product not found"))
 	}
-	images, err := m.applyPhotos(current.Images, photos, p.Validate())
+	var currentImages []domain.Image
+	if len(current.Colours) > 0 {
+		currentImages = current.Colours[0].Images
+	}
+	images, err := m.applyPhotos(currentImages, photos, p.Validate())
 	if err != nil {
 		return domain.Product{}, err
 	}
 	if m.writeErr != nil {
 		return domain.Product{}, m.writeErr
 	}
-	p.Images = images
+	p.Colours = slices.Clone(current.Colours)
+	if len(p.Colours) > 0 {
+		p.Colours[0].Images = images
+	}
 	p.ArchivedAt = current.ArchivedAt
 	m.updated = append(m.updated, p)
 	m.products[p.ID] = p
@@ -147,7 +168,9 @@ func (m *mockProductService) applyPhotos(current []domain.Image, edit *domain.Ph
 		}
 	}
 	if err := e.Validate(); err != nil {
-		return nil, errors.Join(fieldErr, err)
+		var v *domain.ValidationError
+		errors.As(err, &v)
+		return nil, errors.Join(fieldErr, domain.NewValidationError(domain.ColourField(0, v.Field), v.Message))
 	}
 	byID := map[string]domain.Image{}
 	for _, img := range current {
@@ -160,7 +183,7 @@ func (m *mockProductService) applyPhotos(current []domain.Image, edit *domain.Ph
 			return nil, err
 		}
 		if string(data) == notAPhoto {
-			errs = append(errs, domain.NewValidationError(domain.PhotoErrorField(i), "Esse arquivo não é uma foto em JPEG, PNG ou WebP."))
+			errs = append(errs, domain.NewValidationError(domain.ColourField(0, domain.PhotoErrorField(i)), "Esse arquivo não é uma foto em JPEG, PNG ou WebP."))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -209,6 +232,10 @@ func (m *mockProductService) SetArchived(_ context.Context, id string, archived 
 	}
 	m.products[id] = p
 	return p, nil
+}
+
+func (m *mockProductService) SetStock(context.Context, string, string, string, int32) (domain.Product, error) {
+	return domain.Product{}, errors.New("no handler sets stock yet")
 }
 
 func (m *mockProductService) Delete(_ context.Context, id string) error {

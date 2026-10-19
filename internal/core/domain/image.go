@@ -6,8 +6,24 @@ import (
 	"time"
 )
 
-// Image is one photo of a product, stored in two widths. Its place among
-// the product's photos is Position; the first one is the cover.
+// Limits on a product's colours and photos. The site shows each colour's
+// photos in a gallery: past a dozen nobody scrolls, and the bucket fills
+// up.
+const (
+	MaxColours          = 6
+	MaxImagesPerColour  = 12
+	MaxImagesPerProduct = 24
+
+	// MaxNewPhotosPerSave is what one save may upload. Every new photo
+	// travels in the same request as the form, and the machine spools
+	// them while parsing; a piece with many colours is built over several
+	// saves.
+	MaxNewPhotosPerSave = 12
+)
+
+// Image is one photo of a colour of a product, stored in two widths. Its
+// place among the colour's photos is Position; the first one is the
+// colour's cover.
 //
 // The widths come from the real layout: a card renders at roughly 300 CSS
 // pixels (600 on 2x screens) and the product page at roughly 440 (1200
@@ -15,26 +31,22 @@ import (
 //
 // Only the object keys are kept. Public URLs are built from the bucket's
 // base URL, which belongs to the configuration, not to each image.
-// MaxImages is how many photos a product may have. The site shows them in
-// a gallery; past a dozen nobody scrolls, and the bucket fills up.
-const MaxImages = 12
-
 type Image struct {
 	ID        string
-	ProductID string
+	ColourID  string
 	Key600    string
 	Key1200   string
 	Position  int32
 	CreatedAt time.Time
 }
 
-// PhotoEdit is a product's photo list as the person left it on screen.
+// PhotoEdit is a colour's photo list as the person left it on screen.
 // Nothing about photos is saved until the product is: the whole edit is
 // applied at once, or not at all.
 type PhotoEdit struct {
 	// Order is the final list, cover first.
 	Order []PhotoSlot
-	// Removed lists existing photos to delete. Every photo the product
+	// Removed lists existing photos to delete. Every photo the colour
 	// has must be either in Order or here: one in neither means the list
 	// changed elsewhere since the screen was loaded.
 	Removed []string
@@ -65,7 +77,9 @@ func PhotoErrorField(i int) string { return "photos." + strconv.Itoa(i) }
 
 // Validate checks that the edit is well formed: every new photo placed
 // exactly once, no photo twice, nothing both kept and removed, and no more
-// than MaxImages in the end.
+// than MaxImagesPerColour in the end. An AppendNew edit passes unchecked:
+// only the caller knows the photos it appends to, so it resolves the edit
+// into an Order first and validates that.
 func (e PhotoEdit) Validate() error {
 	if e.AppendNew {
 		return nil
@@ -98,9 +112,9 @@ func (e PhotoEdit) Validate() error {
 		}
 	}
 
-	if len(e.Order) > MaxImages {
+	if len(e.Order) > MaxImagesPerColour {
 		return NewValidationError("photos", fmt.Sprintf(
-			"Cada peça pode ter até %d fotos. Tire %d antes de salvar.", MaxImages, len(e.Order)-MaxImages))
+			"Cada cor pode ter até %d fotos. Tire %d antes de salvar.", MaxImagesPerColour, len(e.Order)-MaxImagesPerColour))
 	}
 	return nil
 }

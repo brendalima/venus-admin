@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,16 +63,19 @@ func newTestProduct(t *testing.T, db *sql.DB) domain.Product {
 		PriceCents:  18900,
 		Sizes:       []string{"P", "M"},
 		Description: "description",
+		Colours:     []domain.Colour{{ID: uuid.New().String(), Name: "Bege"}},
 	}
 }
 
-func insertImage(t *testing.T, db *sql.DB, productID string, position int) string {
+// insertTestImage adds a photo to p's first colour behind the repository's
+// back, as another device would.
+func insertTestImage(t *testing.T, db *sql.DB, p domain.Product, position int) string {
 	t.Helper()
 	id := uuid.New().String()
 	_, err := db.ExecContext(context.Background(),
-		`INSERT INTO product_images (id, product_id, key_600, key_1200, position)
-		 VALUES ($1, $2, 'k600', 'k1200', $3)`,
-		id, productID, position)
+		`INSERT INTO product_images (id, product_id, colour_id, key_600, key_1200, position)
+		 VALUES ($1, $2, $3, 'k600', 'k1200', $4)`,
+		id, p.ID, p.Colours[0].ID, position)
 	if err != nil {
 		t.Fatalf("inserting image: %v", err)
 	}
@@ -118,8 +122,11 @@ func TestProductCreateAndGet(t *testing.T) {
 		if got.Details == nil || len(got.Details) != 0 {
 			t.Errorf("%s: details = %#v, want an empty list", name, got.Details)
 		}
-		if got.Images == nil {
-			t.Errorf("%s: images is nil, want an empty list", name)
+		if len(got.Colours) != 1 || got.Colours[0].Name != "Bege" || got.Colours[0].ProductID != first.ID {
+			t.Fatalf("%s: colours = %+v, want the one created", name, got.Colours)
+		}
+		if c := got.Colours[0]; c.Images == nil || c.Stock == nil {
+			t.Errorf("%s: colour images %#v, stock %#v, want empty lists", name, c.Images, c.Stock)
 		}
 	}
 }
@@ -133,22 +140,22 @@ func TestProductImagesComeInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating: %v", err)
 	}
-	second := insertImage(t, db, p.ID, 2)
-	first := insertImage(t, db, p.ID, 1)
+	second := insertTestImage(t, db, p, 2)
+	first := insertTestImage(t, db, p, 1)
 
 	got, err := repo.GetByID(ctx, p.ID)
 	if err != nil {
 		t.Fatalf("getting: %v", err)
 	}
-	if len(got.Images) != 2 {
-		t.Fatalf("got %d images, want 2", len(got.Images))
+	if len(got.Images()) != 2 {
+		t.Fatalf("got %d images, want 2", len(got.Images()))
 	}
 	cover, _ := got.Cover()
 	if cover.ID != first || cover.Key600 != "k600" {
 		t.Errorf("cover = %+v, want the image at position 1", cover)
 	}
-	if got.Images[1].ID != second {
-		t.Errorf("second image = %s, want %s", got.Images[1].ID, second)
+	if got.Images()[1].ID != second {
+		t.Errorf("second image = %s, want %s", got.Images()[1].ID, second)
 	}
 
 	list, err := repo.List(ctx)
@@ -156,8 +163,8 @@ func TestProductImagesComeInOrder(t *testing.T) {
 		t.Fatalf("listing: %v", err)
 	}
 	for _, lp := range list {
-		if lp.ID == p.ID && len(lp.Images) != 2 {
-			t.Errorf("listed product has %d images, want 2", len(lp.Images))
+		if lp.ID == p.ID && len(lp.Images()) != 2 {
+			t.Errorf("listed product has %d images, want 2", len(lp.Images()))
 		}
 	}
 }
@@ -256,16 +263,18 @@ func TestProductNotFound(t *testing.T) {
 	}
 }
 
-func TestProductDeleteCascadesToImages(t *testing.T) {
+func TestProductDeleteCascades(t *testing.T) {
 	db := testDB(t)
 	repo := MustNewProduct(db)
 	ctx := context.Background()
 
-	p, err := repo.Create(ctx, newTestProduct(t, db))
+	in := newTestProduct(t, db)
+	in.Colours[0].Stock = []domain.Stock{{Size: "P", Quantity: 1}}
+	p, err := repo.Create(ctx, in)
 	if err != nil {
 		t.Fatalf("creating: %v", err)
 	}
-	insertImage(t, db, p.ID, 1)
+	insertTestImage(t, db, p, 1)
 
 	if err := repo.Delete(ctx, p.ID); err != nil {
 		t.Fatalf("deleting: %v", err)
@@ -275,19 +284,22 @@ func TestProductDeleteCascadesToImages(t *testing.T) {
 	if _, err := repo.GetByID(ctx, p.ID); !errors.As(err, &notFound) {
 		t.Errorf("deleted product is still readable: err = %v", err)
 	}
-	var images int
+	var colours, images, stock int
 	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM product_images WHERE product_id = $1`, p.ID).Scan(&images); err != nil {
-		t.Fatalf("counting images: %v", err)
+		`SELECT (SELECT count(*) FROM product_colours WHERE id = $1),
+		        (SELECT count(*) FROM product_images WHERE colour_id = $1),
+		        (SELECT count(*) FROM product_variations WHERE colour_id = $1)`, p.Colours[0].ID,
+	).Scan(&colours, &images, &stock); err != nil {
+		t.Fatalf("counting rows: %v", err)
 	}
-	if images != 0 {
-		t.Errorf("%d image rows survived the delete", images)
+	if colours+images+stock != 0 {
+		t.Errorf("%d colour, %d image and %d stock rows survived the delete", colours, images, stock)
 	}
 }
 
 // Every kind of catalogue change must raise the "pending changes" badge,
-// including the two a per-product updated_at cannot see: a delete and a
-// photo change.
+// including the ones a per-product updated_at cannot see: a delete, and a
+// change of photo, colour or stock.
 func TestUnpublishedChanges(t *testing.T) {
 	db := testDB(t)
 	repo := MustNewProduct(db)
@@ -312,7 +324,28 @@ func TestUnpublishedChanges(t *testing.T) {
 		change func() error
 	}{
 		{"update", func() error { p.Name = "Outro Nome"; _, err := repo.Update(ctx, p); return err }},
-		{"image added", func() error { insertImage(t, db, p.ID, 1); return nil }},
+		{"image added", func() error { insertTestImage(t, db, p, 1); return nil }},
+		{"stock counted", func() error { return repo.SetStock(ctx, p.Colours[0].ID, "P", 2) }},
+		{"stock changed", func() error { return repo.SetStock(ctx, p.Colours[0].ID, "P", 1) }},
+		{"colour added", func() error {
+			return editColours(ctx, repo, p.ID, func(p *domain.Product, ch *domain.ColourChanges) {
+				c := domain.Colour{ID: uuid.New().String(), Name: "Vinho"}
+				p.Colours = append(p.Colours, c)
+				ch.AddedColours = []string{c.ID}
+			})
+		}},
+		{"colour renamed", func() error {
+			return editColours(ctx, repo, p.ID, func(p *domain.Product, _ *domain.ColourChanges) { p.Colours[1].Name = "Verde" })
+		}},
+		{"stock no longer counted", func() error {
+			return editColours(ctx, repo, p.ID, func(p *domain.Product, _ *domain.ColourChanges) { p.Colours[0].Stock = nil })
+		}},
+		{"colour removed", func() error {
+			return editColours(ctx, repo, p.ID, func(p *domain.Product, ch *domain.ColourChanges) {
+				ch.RemovedColours = []string{p.Colours[1].ID}
+				p.Colours = p.Colours[:1]
+			})
+		}},
 		{"archived", func() error { _, err := repo.SetArchived(ctx, p.ID, true); return err }},
 		{"restored", func() error { _, err := repo.SetArchived(ctx, p.ID, false); return err }},
 		{"delete", func() error { return repo.Delete(ctx, p.ID) }},
@@ -379,8 +412,11 @@ func TestProductArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating: %v", err)
 	}
-	insertImage(t, db, p.ID, 0)
-	insertImage(t, db, p.ID, 1)
+	insertTestImage(t, db, p, 0)
+	insertTestImage(t, db, p, 1)
+	if err := repo.SetStock(ctx, p.Colours[0].ID, "M", 3); err != nil {
+		t.Fatalf("setting stock: %v", err)
+	}
 	countBefore, err := repo.CountArchived(ctx)
 	if err != nil {
 		t.Fatalf("counting: %v", err)
@@ -390,7 +426,7 @@ func TestProductArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("archiving: %v", err)
 	}
-	if !archived.Archived() || len(archived.Images) != 2 || archived.Position != p.Position {
+	if !archived.Archived() || len(archived.Images()) != 2 || archived.Position != p.Position {
 		t.Errorf("archived = %+v", archived)
 	}
 
@@ -402,7 +438,7 @@ func TestProductArchive(t *testing.T) {
 		t.Error("List lost a product that was not archived")
 	}
 	inArchive := listedIDs(t, repo.ListArchived)
-	if got, ok := inArchive[p.ID]; !ok || len(got.Images) != 2 || !got.Archived() {
+	if got, ok := inArchive[p.ID]; !ok || len(got.Images()) != 2 || !got.Archived() {
 		t.Errorf("ListArchived: %+v, found %v", got, ok)
 	}
 	if _, ok := inArchive[kept.ID]; ok {
@@ -431,8 +467,11 @@ func TestProductArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restoring: %v", err)
 	}
-	if restored.Archived() || restored.Position != p.Position || len(restored.Images) != 2 {
+	if restored.Archived() || restored.Position != p.Position || len(restored.Images()) != 2 {
 		t.Errorf("restored = %+v, want position %d and both images", restored, p.Position)
+	}
+	if c := restored.Colours; len(c) != 1 || c[0].Name != "Bege" || !slices.Equal(c[0].Stock, []domain.Stock{{Size: "M", Quantity: 3}}) {
+		t.Errorf("restored colours = %+v, want Bege with its stock", c)
 	}
 	if _, ok := listedIDs(t, repo.List)[p.ID]; !ok {
 		t.Error("a restored product is not back in List")

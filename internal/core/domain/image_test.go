@@ -11,8 +11,8 @@ func (fakeSource) Bytes() ([]byte, error) { return nil, nil }
 
 func TestPhotoEditValidate(t *testing.T) {
 	two := []PhotoSource{fakeSource{}, fakeSource{}}
-	many := make([]PhotoSlot, MaxImages+1)
-	manyNew := make([]PhotoSource, MaxImages+1)
+	many := make([]PhotoSlot, MaxImagesPerColour+1)
+	manyNew := make([]PhotoSource, MaxImagesPerColour+1)
 	for i := range many {
 		many[i] = PhotoSlot{NewIndex: i}
 		manyNew[i] = fakeSource{}
