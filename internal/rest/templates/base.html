@@ -161,9 +161,14 @@
   .stock-list { flex: 1 1 100%; display: grid; gap: .35rem; font-size: .95rem; }
   .stock-colour { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; }
   .stock-name { font-weight: 600; min-width: 4rem; }
-  .stock-sizes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
-  .stock-sizes li { display: flex; align-items: center; gap: .3rem; }
-  .stock-size-name { min-width: 1.5rem; }
+  .stock-sizes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
+  /* One pill per size, so each − and + clearly belongs to its own size. */
+  .stock-sizes li {
+    display: flex; align-items: center; gap: .3rem;
+    padding: .2rem .25rem .2rem .6rem; background: var(--bg);
+    border: 1px solid var(--border); border-radius: .6rem;
+  }
+  .stock-size-name { min-width: 1.5rem; font-weight: 600; }
   .stock-quantity { min-width: 1.75rem; text-align: center; }
   button.small { padding: .2rem .6rem; font-size: .9rem; }
   /* A soft fill keeps the buttons apart from the quantity between them;
