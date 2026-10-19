@@ -49,7 +49,7 @@ func (r *User) Create(ctx context.Context, u domain.User) (domain.User, error) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation && pgErr.ConstraintName == adminUsersEmailKey {
-			return domain.User{}, domain.NewConflictError("email already in use")
+			return domain.User{}, domain.NewConflictError(domain.ConflictEmail)
 		}
 		return domain.User{}, fmt.Errorf("couldn't create user: %w", err)
 	}

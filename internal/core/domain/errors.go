@@ -11,11 +11,19 @@ func (e *NotFoundError) Error() string { return e.msg }
 func NewNotFoundError(msg string) *NotFoundError { return &NotFoundError{msg: msg} }
 
 // ConflictError reports a uniqueness clash, such as a slug already in use.
-type ConflictError struct{ msg string }
+// Subject says what clashed, so the caller knows which field to point at.
+type ConflictError struct{ Subject string }
 
-func (e *ConflictError) Error() string { return e.msg }
+// What a ConflictError can be about.
+const (
+	ConflictEmail      = "email"
+	ConflictSlug       = "slug"
+	ConflictColourName = "colour name"
+)
 
-func NewConflictError(msg string) *ConflictError { return &ConflictError{msg: msg} }
+func (e *ConflictError) Error() string { return e.Subject + " already in use" }
+
+func NewConflictError(subject string) *ConflictError { return &ConflictError{Subject: subject} }
 
 // UnauthorizedError reports a failed login. It never says whether the
 // email or the password was wrong, so nobody can probe for accounts.

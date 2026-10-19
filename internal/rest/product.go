@@ -233,7 +233,7 @@ func (h *Product) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), p, sub.photos)
+	created, err := h.service.Create(r.Context(), p, newProductColours(sub.photos))
 	if err != nil {
 		h.saveFailed(w, r, page, sub, err)
 		return
@@ -248,7 +248,7 @@ func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderForm(w, r, http.StatusOK, productFormPage{
-		ID: p.ID, Archived: p.Archived(), Form: productFormFrom(p), Photos: p.Images,
+		ID: p.ID, Archived: p.Archived(), Form: productFormFrom(p), Photos: formPhotos(p),
 	})
 }
 
@@ -266,7 +266,17 @@ func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.service.Update(r.Context(), p, sub.photos)
+	var colours *domain.ColoursEdit
+	if sub.photos != nil {
+		current, err := h.service.GetByID(r.Context(), id)
+		if err != nil {
+			h.saveFailed(w, r, page, sub, err)
+			return
+		}
+		colours = editedColours(current, *sub.photos)
+	}
+
+	updated, err := h.service.Update(r.Context(), p, colours)
 	if err != nil {
 		h.saveFailed(w, r, page, sub, err)
 		return
@@ -500,7 +510,7 @@ func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page pro
 func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int, page productFormPage) {
 	page.adminLayout = h.layout(r)
 	page.Sizes = domain.AllSizes()
-	page.MaxPhotos = domain.MaxImages
+	page.MaxPhotos = domain.MaxImagesPerColour
 	page.MaxPhotoMB = maxPhotoBytes >> 20
 	if page.ID != "" && page.Photos == nil {
 		// A rejected edit shows the form again; the photos come from the
@@ -510,7 +520,7 @@ func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int,
 		if err != nil {
 			slog.WarnContext(r.Context(), "couldn't load photos for the form", "error", err)
 		}
-		page.Photos = p.Images
+		page.Photos = formPhotos(p)
 		page.Archived = p.Archived()
 	}
 	h.templates.render(w, r, status, "product_form.html", page)

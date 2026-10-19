@@ -20,10 +20,12 @@ const notAPhoto = "not a photo"
 
 func auroraWithPhotos(n int) domain.Product {
 	p := aurora()
+	c := domain.Colour{ID: "bege", ProductID: p.ID, Name: "Bege"}
 	for i := range n {
 		id := fmt.Sprintf("img-%d", i+1)
-		p.Images = append(p.Images, domain.Image{ID: id, ProductID: p.ID, Key600: "produtos/" + id + "-600.jpg"})
+		c.Images = append(c.Images, domain.Image{ID: id, ColourID: c.ID, Key600: "produtos/" + id + "-600.jpg"})
 	}
+	p.Colours = []domain.Colour{c}
 	return p
 }
 
@@ -143,7 +145,7 @@ func TestSaveWithPhotos(t *testing.T) {
 	}
 
 	got := []string{}
-	for _, img := range app.products.products[auroraID].Images {
+	for _, img := range app.products.products[auroraID].Images() {
 		got = append(got, img.ID)
 	}
 	if !slices.Equal(got, []string{"img-3", "added-1", "img-1", "added-0"}) {
@@ -182,7 +184,7 @@ func TestCreateWithPhotos(t *testing.T) {
 	if res.Header.Get("HX-Redirect") != "/admin" {
 		t.Fatalf("create: status %d, HX-Redirect %q", res.StatusCode, res.Header.Get("HX-Redirect"))
 	}
-	if n := len(app.products.created[0].Images); n != 1 {
+	if n := len(app.products.created[0].Images()); n != 1 {
 		t.Errorf("created with %d photos, want 1", n)
 	}
 }
@@ -263,8 +265,8 @@ func TestSaveWithPhotosRefused(t *testing.T) {
 			if got := len(app.products.edits) > 0; got != tt.wantService {
 				t.Errorf("service called: %v, want %v", got, tt.wantService)
 			}
-			if p := app.products.products[auroraID]; p.Name != "Biquíni Aurora" || len(p.Images) != 1 {
-				t.Errorf("something was saved: %q with %d photos", p.Name, len(p.Images))
+			if p := app.products.products[auroraID]; p.Name != "Biquíni Aurora" || len(p.Images()) != 1 {
+				t.Errorf("something was saved: %q with %d photos", p.Name, len(p.Images()))
 			}
 		})
 	}
@@ -291,5 +293,89 @@ func TestPhotoPreviewsAllowedByCSP(t *testing.T) {
 		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: blob:") {
 		t.Errorf("CSP %q does not allow blob: previews", csp)
+	}
+}
+
+// Until the form shows colours, it edits the first colour's photos and
+// must leave every colour's name and stock as they are.
+func TestSaveKeepsColoursTheFormDoesNotShow(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	p := auroraWithPhotos(1)
+	p.Colours[0].Stock = []domain.Stock{{Size: "P", Quantity: 2}}
+	p.Colours = append(p.Colours, domain.Colour{
+		ID: "vinho", Name: "Vinho", Stock: []domain.Stock{{Size: "P", Quantity: 0}},
+		Images: []domain.Image{{ID: "img-v", ColourID: "vinho"}},
+	})
+	app.products.add(p)
+
+	app.postProduct(t, "/admin/products/"+auroraID, validForm(), ptr("new:0,id:img-1"), nil, upload{"IMG_0001.JPG", []byte("one")})
+
+	edit := app.products.colourEdits[len(app.products.colourEdits)-1]
+	if edit == nil || len(edit.Colours) != 2 || len(edit.Removed) != 0 {
+		t.Fatalf("colour edit %+v, want both colours kept", edit)
+	}
+	bege, vinho := edit.Colours[0], edit.Colours[1]
+	if bege.ID != "bege" || bege.Name != "Bege" || !slices.Equal(bege.Stock, p.Colours[0].Stock) {
+		t.Errorf("first colour %+v, want Bege as stored", bege)
+	}
+	if want := []domain.PhotoSlot{{NewIndex: 0}, {ImageID: "img-1"}}; !slices.Equal(bege.Photos.Order, want) || len(bege.Photos.New) != 1 {
+		t.Errorf("first colour's photos %+v, want the form's edit", bege.Photos)
+	}
+	if vinho.ID != "vinho" || vinho.Name != "Vinho" || !slices.Equal(vinho.Stock, p.Colours[1].Stock) {
+		t.Errorf("second colour %+v, want Vinho as stored", vinho)
+	}
+	if !vinho.Photos.AppendNew || len(vinho.Photos.New) != 0 {
+		t.Errorf("second colour's photos %+v, want them left as they are", vinho.Photos)
+	}
+
+	// Without a photo edit, the colours are not sent at all.
+	app.postProduct(t, "/admin/products/"+auroraID, validForm(), nil, nil)
+	if edit := app.products.colourEdits[len(app.products.colourEdits)-1]; edit != nil {
+		t.Errorf("colour edit %+v, want nil", edit)
+	}
+}
+
+func TestCreateGivesOneColour(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+
+	app.postProduct(t, "/admin/products", validForm(), nil, nil)
+	app.postProduct(t, "/admin/products", validForm(), ptr("new:0"), nil, upload{"IMG_0001.JPG", []byte("one")})
+
+	for i, edit := range app.products.colourEdits {
+		if edit == nil || len(edit.Colours) != 1 || edit.Colours[0].ID != "" || edit.Colours[0].Name != "Única" {
+			t.Errorf("create %d: colour edit %+v, want one new colour named Única", i, edit)
+		}
+	}
+	if n := len(app.products.colourEdits[1].Colours[0].Photos.New); n != 1 {
+		t.Errorf("%d new photos in the colour, want 1", n)
+	}
+}
+
+func TestSaveWithPhotosOfAProductGoneMeanwhile(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+
+	res, _ := app.postProduct(t, "/admin/products/"+auroraID, validForm(), ptr("new:0"), nil, upload{"IMG_0001.JPG", []byte("one")})
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("status %d, want 404", res.StatusCode)
+	}
+	if len(app.products.edits) != 0 {
+		t.Error("the service was asked to save it")
+	}
+}
+
+// The form has no place for colour errors yet. They must still be shown,
+// or the answer would say to check the marked fields and mark none.
+func TestColourErrorsShowWithThePhotos(t *testing.T) {
+	app := newTestApp(t, nil)
+	app.login(t)
+	app.products.add(auroraWithPhotos(1))
+	app.products.writeErr = domain.NewValidationError("colours", "Já existe outra cor com esse nome nesta peça")
+
+	res, body := app.postProduct(t, "/admin/products/"+auroraID, validForm(), ptr("id:img-1"), nil)
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body, "Já existe outra cor com esse nome nesta peça") {
+		t.Errorf("status %d, and the colour error is not shown", res.StatusCode)
 	}
 }

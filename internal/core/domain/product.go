@@ -31,7 +31,9 @@ type Product struct {
 	SoldOut     bool
 	Position    int32
 
-	Images []Image
+	// Colours are the colours the piece comes in, in display order,
+	// each with its photos and stock.
+	Colours []Colour
 
 	// ArchivedAt is when the piece left the collection: it no longer
 	// shows on the site, but keeps its photos and can come back. Zero
@@ -48,12 +50,24 @@ func (p Product) Archived() bool { return !p.ArchivedAt.IsZero() }
 // HasPrice reports whether the price has been set.
 func (p Product) HasPrice() bool { return p.PriceCents > 0 }
 
-// Cover is the photo shown on the catalogue card: the first one.
-func (p Product) Cover() (Image, bool) {
-	if len(p.Images) == 0 {
-		return Image{}, false
+// Images lists the photos of every colour, colour by colour, in order.
+func (p Product) Images() []Image {
+	images := []Image{}
+	for _, c := range p.Colours {
+		images = append(images, c.Images...)
 	}
-	return p.Images[0], true
+	return images
+}
+
+// Cover is the photo shown on the catalogue card: the first one of the
+// first colour that has any.
+func (p Product) Cover() (Image, bool) {
+	for _, c := range p.Colours {
+		if len(c.Images) > 0 {
+			return c.Images[0], true
+		}
+	}
+	return Image{}, false
 }
 
 var (

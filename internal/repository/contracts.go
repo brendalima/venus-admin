@@ -12,8 +12,9 @@ type HealthRepository interface {
 }
 
 // ProductRepository persists products. Reads return each product with
-// its images, cover first. Image files are not the repository's: it keeps
-// their keys, and the caller stores and deletes the files.
+// its colours, in order, each with its images, cover first, and its
+// stock. Image files are not the repository's: it keeps their keys, and
+// the caller stores and deletes the files.
 type ProductRepository interface {
 	// List returns the collection: only products not archived. It is
 	// what the site is built from.
@@ -27,20 +28,28 @@ type ProductRepository interface {
 	GetBySlug(ctx context.Context, slug string) (domain.Product, error)
 
 	// Create places the new product at the end of the catalogue,
-	// ignoring p.Position, with p.Images in the order given.
+	// ignoring p.Position, with p.Colours, their images and stock in the
+	// order given. A colour name used twice in the product comes back as
+	// *domain.ConflictError.
 	Create(ctx context.Context, p domain.Product) (domain.Product, error)
 
-	// Update saves the product's fields and leaves its images alone.
+	// Update saves the product's fields and leaves its colours alone.
 	Update(ctx context.Context, p domain.Product) (domain.Product, error)
 
-	// UpdateWithImages saves the fields and makes the product's images
-	// exactly p.Images, in that order, in one transaction. The images
-	// named in added are inserted; the ones in removed are deleted and
-	// returned, so the caller can delete their files. Any other image
-	// must be one the product has, and every image it has must be in
-	// p.Images or removed. Otherwise the list changed since it was read:
-	// nothing is saved and *domain.StaleError comes back.
-	UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error)
+	// UpdateWithColours saves the fields and makes the product's colours
+	// exactly p.Colours, in that order, each with exactly its images,
+	// in order, and its stock, in one transaction. The colours and images
+	// changes names as added are inserted; the ones it names as removed
+	// are deleted, and every image that goes, removed colours' included,
+	// is returned, so the caller can delete the files. Any other colour
+	// or image must be one the product has, in that colour, and every one
+	// it has must be kept or removed. Otherwise the product changed since
+	// it was read: nothing is saved and *domain.StaleError comes back.
+	UpdateWithColours(ctx context.Context, p domain.Product, changes domain.ColourChanges) (domain.Product, []domain.Image, error)
+
+	// SetStock sets the quantity of one size of a colour, and
+	// *domain.NotFoundError when the colour does not exist.
+	SetStock(ctx context.Context, colourID, size string, quantity int32) error
 
 	// SetArchived takes the product out of the collection, or puts it
 	// back where it was. Nothing else about it changes.

@@ -147,7 +147,7 @@ In the product form, under "Fotos", up to **12 per product**, each up to 15 MB. 
 
 Saving changes the catalogue here, not the site. The site is static and only picks the changes up when someone publishes:
 
-1. The list shows **"Há alterações não publicadas"** whenever the catalogue changed after the last publish. Triggers move `site_state.last_changed_at` on every product and photo change (migration `00003`).
+1. The list shows **"Há alterações não publicadas"** whenever the catalogue changed after the last publish. Triggers move `site_state.last_changed_at` on every change of product, photo, colour and stock (migrations `00003` and `00008`).
 2. **"Publicar alterações"** is always on the list: highlighted while there are changes, plain otherwise. It calls the Cloudflare Pages deploy hook, then records the publish.
 3. The answer: *"Publicação iniciada — o site atualiza em cerca de 1 minuto."* The build is not followed. If it fails, the badge stays on, which is the signal to try again.
 
@@ -220,7 +220,7 @@ Postgres 18 on **Neon**, project `venus`, region `aws-sa-east-1` (São Paulo) �
 
 Migrations live in `adapters/migrations/`, embedded in the binary with `go:embed`, and are applied by the separate `cmd/migrate` binary — never by the API on startup. On Fly it runs as the `release_command`, once per deploy, before the new version starts.
 
-Whether the site has unpublished changes comes from `site_state`: triggers on `products` and `product_images` stamp `last_changed_at` on every insert, update and delete (migration `00003`), and publishing stamps `last_published_at`. A per-product `updated_at` alone would miss deleted products and photo changes.
+Whether the site has unpublished changes comes from `site_state`: triggers on `products`, `product_images`, `product_colours` and `product_variations` stamp `last_changed_at` on every insert, update and delete (migrations `00003` and `00008`), and publishing stamps `last_published_at`. A per-product `updated_at` alone would miss deleted products and photo changes.
 
 The migrator holds a Postgres advisory lock, so two of them started at once take turns.
 

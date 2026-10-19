@@ -67,9 +67,11 @@ func TestAPIProducts(t *testing.T) {
 	withPhotos := aurora()
 	withPhotos.Description = "Verde-água"
 	withPhotos.Details = []string{"Forro duplo"}
-	withPhotos.Images = []domain.Image{
-		{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"},
-		{ID: "i2", Key600: "produtos/i2-600.jpg", Key1200: "produtos/i2-1200.jpg"},
+	// Two colours: the site still gets one list, every colour's photos in
+	// order, until it learns about colours.
+	withPhotos.Colours = []domain.Colour{
+		{ID: "c1", Name: "Bege", Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}}},
+		{ID: "c2", Name: "Vinho", Images: []domain.Image{{ID: "i2", Key600: "produtos/i2-600.jpg", Key1200: "produtos/i2-1200.jpg"}}},
 	}
 	// Details empty but not nil, as the repository returns them.
 	unpriced := domain.Product{ID: "other", Slug: "maio-orion", Name: "Maiô Órion", Sizes: []string{"M"}, Details: []string{}, SoldOut: true}
