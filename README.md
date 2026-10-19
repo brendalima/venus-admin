@@ -112,7 +112,7 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `GET /admin/products/{id}` | Edit form |
 | `POST /admin/products/{id}` | Saves the edits |
 | `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
-| `POST /admin/products/{id}/colours/{colourID}/stock/{size}` | The list's "−1": sets that size's quantity (form: `quantity=<n>`, the quantity wanted, not a change); answers the list row to HTMX |
+| `POST /admin/products/{id}/colours/{colourID}/stock/{size}` | The list's "−" and "+": sets that size's quantity (form: `quantity=<n>`, the quantity wanted, not a change); answers the list row to HTMX |
 | `GET /admin/products/{id}/archive` | Asks for confirmation before taking the product out of the collection |
 | `POST /admin/products/{id}/archive` | Archives it: off the site on the next publish, kept with its photos |
 | `POST /admin/products/{id}/unarchive` | Puts it back in the collection, in its old place; answers a row saying so to HTMX |
@@ -132,7 +132,7 @@ Product form fields (`multipart/form-data`, since photos go with them): `name`, 
 
 In the product form, under "Cores e estoque", each colour has its own name, a quantity per size and its own photos: up to **6 colours**, **12 photos per colour**, **24 per product** and **12 new ones per save**, each up to 15 MB. The first photo of a colour is its cover, and the first colour's is the piece's; "↑ Antes", "↓ Depois", "Usar como capa" and "Tirar" arrange them. A quantity left empty means that size is not counted; a colour with no quantity at all is not counted, and the site shows its sizes without numbers. "Adicionar outra cor" adds a block; without JavaScript, the form offers one blank block to fill instead.
 
-The list shows each counted colour's quantities with a **"−1"** per size, for a sale: like "Marcar como esgotada", it sends the quantity wanted, so a double tap takes one piece, and it only lights the publish badge.
+The list shows each counted colour's quantities with **"−" and "+"** per size, for a sale or a restock: like "Marcar como esgotada", each sends the quantity wanted, so a double tap changes it by one, and each saves at once but only lights the publish badge; the site changes on the next publish.
 
 - **Nothing is saved until "Salvar alterações"** (or "Cadastrar peça"), decided with the owners' needs in mind: they arrange the photos and confirm once. Until then `static/photos.js` keeps the chosen files in the browser and shows them as previews; a notice says there are unsaved changes, and leaving the page asks first. Photos taken out wait under "Serão apagadas ao salvar", with "Desfazer".
 - **All or nothing.** Saving sends the fields and the photos together. The service checks every field and processes every new photo before storing anything, so one refusal lists every problem; then it saves the product and its photo list in one transaction. A refusal changes nothing, and the page keeps the photos as they were arranged: `photos.js` only swaps in the messages and the typed fields, colour block by colour block.

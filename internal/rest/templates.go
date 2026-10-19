@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/brendalima/venus-admin/internal/core/domain"
 )
 
 // The screens are embedded in the binary: there is no build step for the
@@ -34,13 +36,14 @@ func NewTemplates(imageBaseURL string) (*Templates, error) {
 		return nil, errors.New("missing image base url")
 	}
 	funcs := template.FuncMap{
-		"reais":    formatReais,
-		"join":     strings.Join,
-		"add":      func(a, b int) int { return a + b },
-		"imageURL": func(key string) string { return imageBaseURL + "/" + key },
-		"asset":    assetURL,
-		"date":     formatDate,
-		"less":     func(q int32) int32 { return q - 1 },
+		"reais":       formatReais,
+		"join":        strings.Join,
+		"add":         func(a, b int) int { return a + b },
+		"imageURL":    func(key string) string { return imageBaseURL + "/" + key },
+		"asset":       assetURL,
+		"date":        formatDate,
+		"step":        func(q, by int32) int32 { return q + by },
+		"maxQuantity": func() int32 { return domain.MaxQuantity },
 	}
 
 	pages, err := fs.Glob(templatesFS, "templates/*.html")

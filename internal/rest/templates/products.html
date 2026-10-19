@@ -38,24 +38,26 @@
     {{end}}
   </form>
   {{if .TracksStock}}
-  {{/* Each button sends the quantity it leaves, not "one less", so a
-       double tap takes one piece, not two. */}}
+  {{/* Each button sends the quantity it leaves, not "one more" or "one
+       less", so a double tap changes it by one, not two. */}}
   {{$p := .}}
   <div class="stock-list">
     {{range .Colours}}{{if .TracksStock}}{{$c := .}}
     <div class="stock-colour">
       <span class="stock-name">{{.Name}}</span>
       <ul class="stock-sizes">
-        {{range $p.Sizes}}{{$q := $c.Quantity .}}
+        {{range $p.Sizes}}{{$q := $c.Quantity .}}{{$path := printf "/admin/products/%s/colours/%s/stock/%s" $p.ID $c.ID .}}
         <li>
-          <span>{{.}} <strong>{{$q}}</strong></span>
-          {{if gt $q 0}}
-          <form class="inline" method="post" action="/admin/products/{{$p.ID}}/colours/{{$c.ID}}/stock/{{.}}"
-                hx-post="/admin/products/{{$p.ID}}/colours/{{$c.ID}}/stock/{{.}}" hx-target="closest li.product" hx-swap="outerHTML">
-            <input type="hidden" name="quantity" value="{{less $q}}">
-            <button type="submit" class="secondary small" aria-label="Vendeu uma: tirar uma peça de {{$c.Name}}, tamanho {{.}}">−1</button>
+          <span class="stock-size-name">{{.}}</span>
+          <form class="inline" method="post" action="{{$path}}" hx-post="{{$path}}" hx-target="closest li.product" hx-swap="outerHTML">
+            <input type="hidden" name="quantity" value="{{step $q -1}}">
+            <button type="submit" class="secondary small" aria-label="Tirar uma peça de {{$c.Name}}, tamanho {{.}}" {{if le $q 0}}disabled{{end}}>−</button>
           </form>
-          {{end}}
+          <strong class="stock-quantity">{{$q}}</strong>
+          <form class="inline" method="post" action="{{$path}}" hx-post="{{$path}}" hx-target="closest li.product" hx-swap="outerHTML">
+            <input type="hidden" name="quantity" value="{{step $q 1}}">
+            <button type="submit" class="secondary small" aria-label="Pôr mais uma peça de {{$c.Name}}, tamanho {{.}}" {{if ge $q maxQuantity}}disabled{{end}}>+</button>
+          </form>
         </li>
         {{end}}
       </ul>

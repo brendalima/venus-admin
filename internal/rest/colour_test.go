@@ -512,8 +512,10 @@ func TestProductListShowsStock(t *testing.T) {
 	for _, want := range []string{
 		"· 3 em estoque",
 		`action="/admin/products/` + auroraID + `/colours/bege/stock/P"`,
-		`name="quantity" value="0"`, `name="quantity" value="1"`,
-		`aria-label="Vendeu uma: tirar uma peça de Bege, tamanho M"`,
+		// P has 1 and M 2: each button sends what it leaves.
+		`name="quantity" value="0"`, `name="quantity" value="1"`, `name="quantity" value="2"`, `name="quantity" value="3"`,
+		`aria-label="Tirar uma peça de Bege, tamanho M"`,
+		`aria-label="Pôr mais uma peça de Bege, tamanho M"`,
 	} {
 		if !strings.Contains(aurora, want) {
 			t.Errorf("Aurora's row lacks %s", want)
@@ -521,7 +523,7 @@ func TestProductListShowsStock(t *testing.T) {
 	}
 	// Vinho's stock is not counted: nothing to take from.
 	if strings.Contains(aurora, "/colours/vinho/") {
-		t.Error("a colour without stock offers −1")
+		t.Error("a colour without stock offers buttons")
 	}
 	orion := body[strings.Index(body, `id="product-plain"`):]
 	orion = orion[:strings.Index(orion, "</li>")]
@@ -551,14 +553,18 @@ func TestProductSetStock(t *testing.T) {
 		t.Errorf("M = %d after a double tap, want 1", q)
 	}
 
-	// The last one: no −1 left for it.
+	// The last one: − is off, + still there to restock.
 	_, body := app.postHTMX(t, path+"P", url.Values{"quantity": {"0"}})
-	if strings.Contains(body, "/stock/P\"") {
-		t.Error("a size at zero still offers −1")
+	if !strings.Contains(body, `tamanho P" disabled>−</button>`) || strings.Contains(body, `tamanho P" disabled>+</button>`) {
+		t.Errorf("at zero, want − disabled and + enabled, got:\n%s", body)
+	}
+	res, body := app.postHTMX(t, path+"P", url.Values{"quantity": {"1"}})
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "· 2 em estoque") {
+		t.Errorf("+: status %d, want the row with 2 left", res.StatusCode)
 	}
 
 	// Without JavaScript: back to the list.
-	res, _ := app.post(t, path+"M", url.Values{"quantity": {"0"}})
+	res, _ = app.post(t, path+"M", url.Values{"quantity": {"0"}})
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
 		t.Errorf("plain form: status %d, location %q", res.StatusCode, res.Header.Get("Location"))
 	}

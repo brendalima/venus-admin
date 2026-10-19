@@ -162,10 +162,17 @@
   .stock-colour { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; }
   .stock-name { font-weight: 600; min-width: 4rem; }
   .stock-sizes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
-  .stock-sizes li { display: flex; align-items: center; gap: .35rem; }
+  .stock-sizes li { display: flex; align-items: center; gap: .3rem; }
+  .stock-size-name { min-width: 1.5rem; }
+  .stock-quantity { min-width: 1.75rem; text-align: center; }
   button.small { padding: .2rem .6rem; font-size: .9rem; }
-  /* A soft fill keeps the button apart from the quantity beside it. */
-  .stock-sizes button { background: #f6e4dd; color: #8f3e2a; border-color: transparent; }
+  /* A soft fill keeps the buttons apart from the quantity between them;
+     2.25rem keeps them a fair target for a thumb. */
+  .stock-sizes button {
+    background: #f6e4dd; color: #8f3e2a; border-color: transparent;
+    min-width: 2.25rem; min-height: 2.25rem; padding: 0 .5rem; font-size: 1.1rem; line-height: 1;
+  }
+  .stock-sizes button:disabled { opacity: .4; cursor: default; }
 </style>
 </head>
 <body>
