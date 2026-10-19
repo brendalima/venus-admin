@@ -5,7 +5,8 @@ For whoever picks up the next milestone. Everything below was verified against t
 Last verified: 2026-10-18 · `master` at `2578ba4` (PR #5, `publishing`, merged) · password reset on PR #6 (`password-reset`), rebased onto it and ready to merge.
 
 > **Read first (2026-10-18, evening):**
-> - **M1, M2 and M3 are done.** Password reset is the last piece of M1, on PR #6; its secrets (`RESEND_API_KEY`, `MAIL_FROM`) are already in `fly secrets`. Next is M4, the site (§4).
+> - **M1, M2 and M3 are done.** Password reset is the last piece of M1, on PR #6; its secrets (`RESEND_API_KEY`, `MAIL_FROM`) are already in `fly secrets`.
+> - **M4 is half done (2026-10-18, night).** The storefront is **live at `venus-site.pages.dev`** on Cloudflare Pages, and `../venus-site` now fetches the catalogue from `/api/products` at build time. What is left is all on the human's side: the Pages variables, the deploy hook and the apex domain — see §4.
 > - **Migration numbers:** `00006` is password reset (`password_resets`, `admin_users.password_version`). The next migration is `00007`. Never land a lower number after a higher one; goose refuses migrations older than the last one applied.
 > - **Several agents may work in this repository at once.** Check `git branch --show-current` and `git status` before switching branches; to work on another branch, use `git worktree add` in a sibling directory and symlink `.env.local` into it.
 
@@ -139,7 +140,21 @@ M1 (products, login, password reset) and M2 (photos) are done, password reset pe
 
 `/api/products` is what the site's build reads: `GET`, read-only, with `Authorization: Bearer $API_TOKEN`. The README has the shape and an example. Photo URLs are `IMAGE_BASE_URL` plus each key, 600 and 1200.
 
-**M4, next:** deploy `../venus-site` to Cloudflare Pages and make its build fetch `/api/products` with the token (a Pages secret holding the same value as Fly's `API_TOKEN`), map the snake_case to its types, hide a missing price, and drop the photo `label` (see the notes at the top). Then create the deploy hook in Pages and `fly secrets set DEPLOY_HOOK_URL=…`; the button appears with no code change. The first real publish is M3's end-to-end check. Mind that the build must tolerate the admin's machine waking up (Fly starts it on the request, which takes a second or two) and Neon resuming. Full plan: `~/.claude/plans/graceful-gathering-koala.md` (in Portuguese; note that this directory has been wiped by an automated cleanup once already — copy anything you rely on).
+**M4, in progress.** Done in `../venus-site` (one commit on `master`, **not yet pushed** — the SSH key is passphrase-protected, see §6):
+
+- **The site is deployed** at `venus-site.pages.dev`. It is a **Pages** project, not a Worker: the human first created it under Workers and the build failed, because an assets-only Worker needs a `wrangler.jsonc` the repo does not have. Pages, with build `npm run build` and output `dist`, worked on the existing code with no change. `public/_redirects` is what gives Pages the SPA fallback — **removing it 404s every deep link**, verified on the live deploy.
+- **The build reads the catalogue.** `scripts/catalogo.mjs` fetches `GET /api/products`, maps the snake_case, and writes `src/data/catalogo.json`, which `src/data/products.ts` types as `Product[]` — `tsc` rejects a JSON outside the type, verified by planting a wrong field. The committed copy of that JSON is what lets `npm run dev` run without the admin.
+- **Failure is loud by design** (decided with the human): 5 attempts with doubling backoff (2s–16s) to cover the Fly machine waking and Neon resuming, then the build exits non-zero and Pages keeps the previous deploy. Publishing yesterday's catalogue while reporting success would hide the failure; the admin's "Há alterações não publicadas" badge staying on is the honest signal. All of these paths were verified by breaking them, including the 401 (which does not retry) and the `CF_PAGES`-without-variables guard.
+- **A missing price shows nothing, photos lost the `label`** (the notes at the top), verified by rendering a no-price, no-photo catalogue at 360px and 1280px.
+
+Left for the human, all in the dashboard:
+
+1. **Push the commit** in `../venus-site`.
+2. **Pages variables:** `ADMIN_API_URL=https://admin.venusoasis.com.br` and `API_TOKEN` (as a secret) holding the **same value as Fly's `API_TOKEN`** — which only the human has, since `fly secrets` are write-only. Without them the Cloudflare build fails on purpose.
+3. **Deploy hook:** *Settings > Builds > Deploy hooks*, then `fly secrets set DEPLOY_HOOK_URL=…`. The publish button appears with no code change, and the first real publish is M3's end-to-end check.
+4. **The apex domain:** `venusoasis.com.br` still points nowhere; attach it to the Pages project.
+
+Full plan: `~/.claude/plans/graceful-gathering-koala.md` (in Portuguese; note that this directory has been wiped by an automated cleanup once already — copy anything you rely on).
 
 ---
 
