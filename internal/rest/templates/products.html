@@ -42,9 +42,14 @@
        less", so a double tap changes it by one, not two. */}}
   {{$p := .}}
   <div class="stock-list">
-    {{range .Colours}}{{if .TracksStock}}{{$c := .}}
+    {{/* Once any colour is counted, every colour is listed: one left out
+         would look lost. */}}
+    {{range .Colours}}{{$c := .}}
     <div class="stock-colour">
       <span class="stock-name">{{.Name}}</span>
+      {{if not .TracksStock}}
+      <span class="stock-untracked">Estoque não controlado — <a href="/admin/products/{{$p.ID}}">lance as quantidades na peça</a></span>
+      {{else}}
       <ul class="stock-sizes">
         {{range $p.Sizes}}{{$q := $c.Quantity .}}{{$path := printf "/admin/products/%s/colours/%s/stock/%s" $p.ID $c.ID .}}
         <li>
@@ -61,8 +66,9 @@
         </li>
         {{end}}
       </ul>
+      {{end}}
     </div>
-    {{end}}{{end}}
+    {{end}}
   </div>
   {{end}}
 </li>

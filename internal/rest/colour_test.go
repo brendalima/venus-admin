@@ -521,13 +521,17 @@ func TestProductListShowsStock(t *testing.T) {
 			t.Errorf("Aurora's row lacks %s", want)
 		}
 	}
-	// Vinho's stock is not counted: nothing to take from.
+	// Vinho's stock is not counted: listed, saying so, with no buttons.
 	if strings.Contains(aurora, "/colours/vinho/") {
 		t.Error("a colour without stock offers buttons")
 	}
+	vinho := aurora[strings.Index(aurora, ">Vinho<"):]
+	if !strings.Contains(vinho[:strings.Index(vinho, "</div>")], "Estoque não controlado") {
+		t.Error("a colour whose stock is not counted is not listed as such")
+	}
 	orion := body[strings.Index(body, `id="product-plain"`):]
 	orion = orion[:strings.Index(orion, "</li>")]
-	if strings.Contains(orion, "em estoque") || strings.Contains(orion, "stock-list") {
+	if strings.Contains(orion, "em estoque") || strings.Contains(orion, "stock-list") || strings.Contains(orion, "não controlado") {
 		t.Error("a piece whose stock is not counted shows a count")
 	}
 }
