@@ -1,0 +1,45 @@
+{{define "title"}}Peças arquivadas{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+{{template "flash" .}}
+<div class="title-row">
+  <h1>Peças arquivadas</h1>
+</div>
+<p class="muted">Estas peças não aparecem no site, mas continuam guardadas com as fotos. Dá para trazer qualquer uma de volta.</p>
+
+{{if .Products}}
+<ul class="products">
+  {{range .Products}}{{template "archived-row" .}}{{end}}
+</ul>
+{{else}}
+<div class="card">
+  <p>Nenhuma peça arquivada.</p>
+  <p class="muted">O que você tirar da coleção aparece aqui.</p>
+</div>
+{{end}}
+
+<p class="actions"><a href="/admin">Voltar para as peças</a></p>
+{{end}}
+
+{{define "archived-row"}}
+<li class="product" id="product-{{.ID}}">
+  {{template "product-summary" .}}
+  <div class="row-actions">
+    <form class="inline" method="post" action="/admin/products/{{.ID}}/unarchive"
+          hx-post="/admin/products/{{.ID}}/unarchive" hx-target="closest li" hx-swap="outerHTML">
+      <button type="submit" class="secondary">Voltar para a coleção</button>
+    </form>
+    <a href="/admin/products/{{.ID}}/delete">Apagar de vez</a>
+  </div>
+</li>
+{{end}}
+
+{{/* What replaces a row once its piece is back in the collection: the
+     outcome where the person is looking. */}}
+{{define "restored-row"}}
+<li class="product" id="product-{{.ID}}">
+  <p class="restored" role="status">“{{.Name}}” voltou para a coleção. Ela aparece no site na próxima publicação. <a href="/admin">Ver nas peças</a></p>
+</li>
+{{end}}

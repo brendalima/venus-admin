@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,7 +19,7 @@ var (
 )
 
 const (
-	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, created_at, updated_at`
+	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, archived_at, created_at, updated_at`
 	imageColumns   = `id, product_id, key_600, key_1200, position, created_at`
 
 	pgUniqueViolation = "23505"
@@ -44,9 +45,32 @@ func MustNewProduct(db *sql.DB) *Product {
 	return p
 }
 
+// List returns the collection: every product not archived, in catalogue
+// order. Anything that shows products to the site goes through here, so
+// an archived piece cannot reappear by a query forgetting to filter.
 func (r *Product) List(ctx context.Context) ([]domain.Product, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+productColumns+` FROM products ORDER BY position, created_at, id`)
+	return r.list(ctx,
+		`SELECT `+productColumns+` FROM products WHERE archived_at IS NULL ORDER BY position, created_at, id`)
+}
+
+// ListArchived returns the archived products, the most recently archived
+// first.
+func (r *Product) ListArchived(ctx context.Context) ([]domain.Product, error) {
+	return r.list(ctx,
+		`SELECT `+productColumns+` FROM products WHERE archived_at IS NOT NULL ORDER BY archived_at DESC, id`)
+}
+
+func (r *Product) CountArchived(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM products WHERE archived_at IS NOT NULL`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("couldn't count archived products: %w", err)
+	}
+	return n, nil
+}
+
+func (r *Product) list(ctx context.Context, query string) ([]domain.Product, error) {
+	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't list products: %w", err)
 	}
@@ -132,9 +156,9 @@ func (r *Product) Update(ctx context.Context, p domain.Product) (domain.Product,
 		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
 		     details = $7, sold_out = $8, position = $9
 		 WHERE id = $1
-		 RETURNING created_at, updated_at`,
+		 RETURNING archived_at, created_at, updated_at`,
 		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
-	).Scan(&p.CreatedAt, &p.UpdatedAt)
+	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.NewNotFoundError("product not found")
 	}
@@ -166,9 +190,9 @@ func (r *Product) UpdateWithImages(ctx context.Context, p domain.Product, added,
 		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
 		     details = $7, sold_out = $8, position = $9
 		 WHERE id = $1
-		 RETURNING created_at, updated_at`,
+		 RETURNING archived_at, created_at, updated_at`,
 		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
-	).Scan(&p.CreatedAt, &p.UpdatedAt)
+	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, nil, domain.NewNotFoundError("product not found")
 	}
@@ -236,6 +260,34 @@ func (r *Product) UpdateWithImages(ctx context.Context, p domain.Product, added,
 	}
 	p.Images = images
 	return p, gone, nil
+}
+
+// SetArchived takes the product out of the collection, or puts it back,
+// leaving everything else as it is. Its place in the catalogue is kept,
+// so a piece put back returns where it was.
+func (r *Product) SetArchived(ctx context.Context, id string, archived bool) (domain.Product, error) {
+	if uuid.Validate(id) != nil {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
+	}
+	p, err := scanProduct(r.db.QueryRowContext(ctx,
+		`UPDATE products
+		 SET archived_at = CASE WHEN $2 THEN now() END
+		 WHERE id = $1
+		 RETURNING `+productColumns,
+		id, archived,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
+	}
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't archive product: %w", err)
+	}
+
+	updated := []domain.Product{p}
+	if err := r.attachImages(ctx, updated); err != nil {
+		return domain.Product{}, err
+	}
+	return updated[0], nil
 }
 
 // lockImages reads a product's image rows, by ID, holding them until the
@@ -392,8 +444,21 @@ type scanner interface {
 func scanProduct(s scanner) (domain.Product, error) {
 	var p domain.Product
 	err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.PriceCents, &p.Sizes, &p.Description,
-		&p.Details, &p.SoldOut, &p.Position, &p.CreatedAt, &p.UpdatedAt)
+		&p.Details, &p.SoldOut, &p.Position, (*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
 	return p, err
+}
+
+// nullTime scans a nullable timestamp into a time.Time, NULL becoming the
+// zero time, which is how the domain says "not set".
+type nullTime time.Time
+
+func (t *nullTime) Scan(src any) error {
+	var n sql.NullTime
+	if err := n.Scan(src); err != nil {
+		return err
+	}
+	*t = nullTime(n.Time)
+	return nil
 }
 
 func translateWriteError(err error, action string) error {

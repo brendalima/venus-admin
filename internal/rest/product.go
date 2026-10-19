@@ -19,6 +19,10 @@ import (
 // details, and nothing near what would cost memory to parse.
 const maxProductFormBytes = 64 << 10
 
+// archivedListPath is where archived pieces are listed, and the only
+// place that leads to deleting one for good.
+const archivedListPath = "/admin/arquivadas"
+
 const (
 	sessionFlashKey      = "flash"
 	sessionFlashErrorKey = "flash_error"
@@ -39,15 +43,26 @@ type productListPage struct {
 	// SiteUnknown is set when the site's status could not be read. The
 	// list still shows, and so does the button.
 	SiteUnknown bool
+	// Archived counts the archived pieces, for the link to them: without
+	// the number nobody remembers the screen exists. ArchivedUnknown
+	// hides it when it could not be counted.
+	Archived        int
+	ArchivedUnknown bool
+}
+
+type archivedListPage struct {
+	adminLayout
+	Products []domain.Product
 }
 
 type productFormPage struct {
 	adminLayout
-	ID     string // empty when creating
-	Form   productForm
-	Errors map[string]string // by field
-	Alert  string            // a problem that belongs to no field
-	Sizes  []string          // every size on offer
+	ID       string // empty when creating
+	Archived bool   // out of the collection; the form offers to bring it back
+	Form     productForm
+	Errors   map[string]string // by field
+	Alert    string            // a problem that belongs to no field
+	Sizes    []string          // every size on offer
 
 	// Photos are the ones stored; changes made on screen live in the
 	// browser (static/photos.js) until the form is saved.
@@ -57,7 +72,8 @@ type productFormPage struct {
 	MaxPhotoMB  int
 }
 
-type productDeletePage struct {
+// productConfirmPage asks before archiving or deleting a product.
+type productConfirmPage struct {
 	adminLayout
 	Product domain.Product
 }
@@ -179,7 +195,26 @@ func (h *Product) List(w http.ResponseWriter, r *http.Request) {
 		page.SiteUnknown = true
 		page.Site.CanPublish = true
 	}
+	if page.Archived, err = h.service.CountArchived(ctx); err != nil {
+		slog.ErrorContext(ctx, "couldn't count archived products", "error", err)
+		page.ArchivedUnknown = true
+	}
 	h.templates.render(w, r, http.StatusOK, "products.html", page)
+}
+
+func (h *Product) ListArchived(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	products, err := h.service.ListArchived(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "couldn't list archived products", "error", err)
+		h.renderMessage(w, r, http.StatusInternalServerError,
+			"Não consegui carregar as peças arquivadas", "Tente de novo em instantes.")
+		return
+	}
+	h.templates.render(w, r, http.StatusOK, "products_archived.html", archivedListPage{
+		adminLayout: h.layout(r),
+		Products:    products,
+	})
 }
 
 func (h *Product) New(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +247,9 @@ func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.renderForm(w, r, http.StatusOK, productFormPage{ID: p.ID, Form: productFormFrom(p), Photos: p.Images})
+	h.renderForm(w, r, http.StatusOK, productFormPage{
+		ID: p.ID, Archived: p.Archived(), Form: productFormFrom(p), Photos: p.Images,
+	})
 }
 
 func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +272,11 @@ func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.flash(r, sessionFlashKey, "As alterações em “"+updated.Name+"” foram salvas.")
+	// Back to the list it is on: an archived piece is not in the main one.
+	if updated.Archived() {
+		seeOther(w, r, archivedListPath)
+		return
+	}
 	seeOther(w, r, "/admin")
 }
 
@@ -277,12 +319,68 @@ func (h *Product) SetSoldOut(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
+func (h *Product) ConfirmArchive(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	h.templates.render(w, r, http.StatusOK, "product_archive.html", productConfirmPage{
+		adminLayout: h.layout(r),
+		Product:     p,
+	})
+}
+
+func (h *Product) Archive(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.setArchived(w, r, true)
+	if !ok {
+		return
+	}
+	h.flash(r, sessionFlashKey, "“"+p.Name+"” saiu da coleção. Ela continua guardada em “Peças arquivadas”.")
+	seeOther(w, r, "/admin")
+}
+
+// Unarchive puts a product back in the collection. Through HTMX, from the
+// archived list, it answers with a row saying so in place of the
+// product's; otherwise it goes to the main list, where the piece now is.
+func (h *Product) Unarchive(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.setArchived(w, r, false)
+	if !ok {
+		return
+	}
+	if isHTMX(r) {
+		h.templates.renderFragment(w, r, http.StatusOK, "products_archived.html", "restored-row", p)
+		return
+	}
+	h.flash(r, sessionFlashKey, "“"+p.Name+"” voltou para a coleção.")
+	seeOther(w, r, "/admin")
+}
+
+// setArchived archives or restores the product named in the URL, or
+// answers for the handler when it cannot.
+func (h *Product) setArchived(w http.ResponseWriter, r *http.Request, archived bool) (domain.Product, bool) {
+	ctx := r.Context()
+	p, err := h.service.SetArchived(ctx, r.PathValue("id"), archived)
+	var notFound *domain.NotFoundError
+	if errors.As(err, &notFound) {
+		h.flash(r, sessionFlashErrorKey, "Essa peça não existe mais. Talvez alguém a tenha apagado.")
+		seeOther(w, r, "/admin")
+		return domain.Product{}, false
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "couldn't set archived", "archived", archived, "error", err)
+		h.flash(r, sessionFlashErrorKey, "Não consegui salvar agora. Tente de novo em instantes.")
+		seeOther(w, r, "/admin")
+		return domain.Product{}, false
+	}
+	return p, true
+}
+
 func (h *Product) ConfirmDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.load(w, r)
 	if !ok {
 		return
 	}
-	h.templates.render(w, r, http.StatusOK, "product_delete.html", productDeletePage{
+	h.templates.render(w, r, http.StatusOK, "product_delete.html", productConfirmPage{
 		adminLayout: h.layout(r),
 		Product:     p,
 	})
@@ -306,8 +404,8 @@ func (h *Product) Delete(w http.ResponseWriter, r *http.Request) {
 	// Gone either way: if someone else deleted it a moment ago, the
 	// outcome is the one asked for.
 	slog.InfoContext(ctx, "product deleted", "product_id", p.ID, "slug", p.Slug)
-	h.flash(r, sessionFlashKey, "“"+p.Name+"” foi apagada.")
-	seeOther(w, r, "/admin")
+	h.flash(r, sessionFlashKey, "“"+p.Name+"” foi apagada de vez.")
+	seeOther(w, r, archivedListPath)
 }
 
 // load fetches the product named in the URL, or answers for the handler
@@ -413,6 +511,7 @@ func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int,
 			slog.WarnContext(r.Context(), "couldn't load photos for the form", "error", err)
 		}
 		page.Photos = p.Images
+		page.Archived = p.Archived()
 	}
 	h.templates.render(w, r, status, "product_form.html", page)
 }

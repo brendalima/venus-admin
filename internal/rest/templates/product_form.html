@@ -8,6 +8,7 @@
 {{template "flash" .}}
 <div class="card">
   <h1>{{if .ID}}Editar peça{{else}}Nova peça{{end}}</h1>
+  {{if .Archived}}<p class="muted">Peça arquivada: não aparece no site. Para trazê-la de volta, use o botão no fim da página.</p>{{end}}
 
   {{/* photos.js sends this form itself, with the photos as arranged on
        screen. Without JavaScript it posts as it is, and new photos go
@@ -116,12 +117,22 @@
 
     <div class="actions">
       <button type="submit" data-submit>{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}</button>
-      <a href="/admin">Cancelar</a>
+      <a href="{{if .Archived}}/admin/arquivadas{{else}}/admin{{end}}">Cancelar</a>
     </div>
   </form>
 </div>
 
-{{if .ID}}
-<p class="actions"><a href="/admin/products/{{.ID}}/delete">Apagar esta peça</a></p>
+{{if .Archived}}
+<div class="card archived-note">
+  <p><strong>Esta peça está arquivada.</strong> Ela não aparece no site, mas continua guardada com as fotos.</p>
+  <form method="post" action="/admin/products/{{.ID}}/unarchive">
+    <div class="actions">
+      <button type="submit" class="secondary">Voltar para a coleção</button>
+      <a href="/admin/arquivadas">Ver as peças arquivadas</a>
+    </div>
+  </form>
+</div>
+{{else if .ID}}
+<p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar da coleção</a></p>
 {{end}}
 {{end}}

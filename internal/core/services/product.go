@@ -54,6 +54,14 @@ func (s *Product) List(ctx context.Context) ([]domain.Product, error) {
 	return s.repo.List(ctx)
 }
 
+func (s *Product) ListArchived(ctx context.Context) ([]domain.Product, error) {
+	return s.repo.ListArchived(ctx)
+}
+
+func (s *Product) CountArchived(ctx context.Context) (int, error) {
+	return s.repo.CountArchived(ctx)
+}
+
 func (s *Product) GetByID(ctx context.Context, id string) (domain.Product, error) {
 	return s.repo.GetByID(ctx, id)
 }
@@ -147,6 +155,24 @@ func (s *Product) SetSoldOut(ctx context.Context, id string, soldOut bool) (doma
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
 		return domain.Product{}, fmt.Errorf("couldn't update product %s: %w", id, err)
+	}
+	return updated, nil
+}
+
+func (s *Product) SetArchived(ctx context.Context, id string, archived bool) (domain.Product, error) {
+	p, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't load product %s: %w", id, err)
+	}
+	if p.Archived() == archived {
+		// Already as asked: writing again would move the archive date and
+		// light the publish badge for nothing.
+		return p, nil
+	}
+
+	updated, err := s.repo.SetArchived(ctx, id, archived)
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("couldn't set product %s archived: %w", id, err)
 	}
 	return updated, nil
 }

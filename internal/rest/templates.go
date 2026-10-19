@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The screens are embedded in the binary: there is no build step for the
@@ -38,6 +39,7 @@ func NewTemplates(imageBaseURL string) (*Templates, error) {
 		"add":      func(a, b int) int { return a + b },
 		"imageURL": func(key string) string { return imageBaseURL + "/" + key },
 		"asset":    assetURL,
+		"date":     formatDate,
 	}
 
 	pages, err := fs.Glob(templatesFS, "templates/*.html")
@@ -101,3 +103,11 @@ func (t *Templates) renderTemplate(w http.ResponseWriter, r *http.Request, statu
 		slog.ErrorContext(r.Context(), "couldn't write response", "error", err)
 	}
 }
+
+// brasilia is the shop's time. Brazil has kept no daylight saving time
+// since 2019, so a fixed offset is exact, and the static image needs no
+// time zone database.
+var brasilia = time.FixedZone("BRT", -3*60*60)
+
+// formatDate writes a day the way the owners do, 18/10/2026.
+func formatDate(t time.Time) string { return t.In(brasilia).Format("02/01/2006") }

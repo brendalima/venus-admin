@@ -313,6 +313,8 @@ func TestUnpublishedChanges(t *testing.T) {
 	}{
 		{"update", func() error { p.Name = "Outro Nome"; _, err := repo.Update(ctx, p); return err }},
 		{"image added", func() error { insertImage(t, db, p.ID, 1); return nil }},
+		{"archived", func() error { _, err := repo.SetArchived(ctx, p.ID, true); return err }},
+		{"restored", func() error { _, err := repo.SetArchived(ctx, p.ID, false); return err }},
 		{"delete", func() error { return repo.Delete(ctx, p.ID) }},
 	}
 
@@ -346,5 +348,103 @@ func TestUnpublishedChanges(t *testing.T) {
 				t.Error("change was not reported as pending")
 			}
 		})
+	}
+}
+
+func listedIDs(t *testing.T, list func(context.Context) ([]domain.Product, error)) map[string]domain.Product {
+	t.Helper()
+	ps, err := list(context.Background())
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	byID := map[string]domain.Product{}
+	for _, p := range ps {
+		byID[p.ID] = p
+	}
+	return byID
+}
+
+// An archived piece must leave every list the site is built from, and
+// come back from the archive exactly as it was.
+func TestProductArchive(t *testing.T) {
+	db := testDB(t)
+	repo := MustNewProduct(db)
+	ctx := context.Background()
+
+	kept, err := repo.Create(ctx, newTestProduct(t, db))
+	if err != nil {
+		t.Fatalf("creating: %v", err)
+	}
+	p, err := repo.Create(ctx, newTestProduct(t, db))
+	if err != nil {
+		t.Fatalf("creating: %v", err)
+	}
+	insertImage(t, db, p.ID, 0)
+	insertImage(t, db, p.ID, 1)
+	countBefore, err := repo.CountArchived(ctx)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+
+	archived, err := repo.SetArchived(ctx, p.ID, true)
+	if err != nil {
+		t.Fatalf("archiving: %v", err)
+	}
+	if !archived.Archived() || len(archived.Images) != 2 || archived.Position != p.Position {
+		t.Errorf("archived = %+v", archived)
+	}
+
+	listed := listedIDs(t, repo.List)
+	if _, ok := listed[p.ID]; ok {
+		t.Error("List returns an archived product: it would reach the site")
+	}
+	if _, ok := listed[kept.ID]; !ok {
+		t.Error("List lost a product that was not archived")
+	}
+	inArchive := listedIDs(t, repo.ListArchived)
+	if got, ok := inArchive[p.ID]; !ok || len(got.Images) != 2 || !got.Archived() {
+		t.Errorf("ListArchived: %+v, found %v", got, ok)
+	}
+	if _, ok := inArchive[kept.ID]; ok {
+		t.Error("ListArchived returns a product in the collection")
+	}
+	if n, err := repo.CountArchived(ctx); err != nil || n != countBefore+1 {
+		t.Errorf("CountArchived = %d, %v; want %d", n, err, countBefore+1)
+	}
+
+	// The edit screen and the archive still load it.
+	got, err := repo.GetByID(ctx, p.ID)
+	if err != nil || !got.Archived() || !got.ArchivedAt.Equal(archived.ArchivedAt) {
+		t.Errorf("GetByID = %+v, %v", got, err)
+	}
+	if got, err := repo.GetBySlug(ctx, p.Slug); err != nil || !got.Archived() {
+		t.Errorf("GetBySlug = %+v, %v", got, err)
+	}
+
+	// Saving its fields leaves it archived, and says so.
+	got.Name = "Outro Nome"
+	if updated, err := repo.Update(ctx, got); err != nil || !updated.Archived() {
+		t.Errorf("Update of an archived product = %+v, %v", updated, err)
+	}
+
+	restored, err := repo.SetArchived(ctx, p.ID, false)
+	if err != nil {
+		t.Fatalf("restoring: %v", err)
+	}
+	if restored.Archived() || restored.Position != p.Position || len(restored.Images) != 2 {
+		t.Errorf("restored = %+v, want position %d and both images", restored, p.Position)
+	}
+	if _, ok := listedIDs(t, repo.List)[p.ID]; !ok {
+		t.Error("a restored product is not back in List")
+	}
+	if _, ok := listedIDs(t, repo.ListArchived)[p.ID]; ok {
+		t.Error("a restored product is still in ListArchived")
+	}
+
+	var nf *domain.NotFoundError
+	for _, id := range []string{uuid.New().String(), "not-a-uuid"} {
+		if _, err := repo.SetArchived(ctx, id, true); !errors.As(err, &nf) {
+			t.Errorf("SetArchived(%q): err = %v, want NotFoundError", id, err)
+		}
 	}
 }

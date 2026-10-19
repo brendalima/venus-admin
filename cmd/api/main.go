@@ -121,6 +121,12 @@ func run() error {
 	app.Handle("GET /admin/products/{id}", private(rProduct.Edit))
 	app.Handle("POST /admin/products/{id}", private(rProduct.Update))
 	app.Handle("POST /admin/products/{id}/sold-out", private(rProduct.SetSoldOut))
+	app.Handle("GET /admin/products/{id}/archive", private(rProduct.ConfirmArchive))
+	app.Handle("POST /admin/products/{id}/archive", private(rProduct.Archive))
+	app.Handle("POST /admin/products/{id}/unarchive", private(rProduct.Unarchive))
+	app.Handle("GET /admin/arquivadas", private(rProduct.ListArchived))
+	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))
 	app.Handle("POST /admin/publish", private(rProduct.Publish))

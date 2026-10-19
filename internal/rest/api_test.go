@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/brendalima/venus-admin/internal/core/domain"
 )
@@ -72,8 +73,11 @@ func TestAPIProducts(t *testing.T) {
 	}
 	// Details empty but not nil, as the repository returns them.
 	unpriced := domain.Product{ID: "other", Slug: "maio-orion", Name: "Maiô Órion", Sizes: []string{"M"}, Details: []string{}, SoldOut: true}
+	// Archived: out of the collection, so never sent to the site.
+	archived := domain.Product{ID: "gone", Slug: "saida-lua", Name: "Saída Lua", Sizes: []string{"P"}, ArchivedAt: time.Now()}
 	app.products.add(withPhotos)
 	app.products.add(unpriced)
+	app.products.add(archived)
 
 	res, body = app.get(t, "/api/products", auth)
 	if res.StatusCode != http.StatusOK {

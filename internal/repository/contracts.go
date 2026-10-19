@@ -15,7 +15,14 @@ type HealthRepository interface {
 // its images, cover first. Image files are not the repository's: it keeps
 // their keys, and the caller stores and deletes the files.
 type ProductRepository interface {
+	// List returns the collection: only products not archived. It is
+	// what the site is built from.
 	List(ctx context.Context) ([]domain.Product, error)
+	// ListArchived returns only the archived ones, most recent first.
+	ListArchived(ctx context.Context) ([]domain.Product, error)
+	CountArchived(ctx context.Context) (int, error)
+
+	// GetByID and GetBySlug find a product archived or not.
 	GetByID(ctx context.Context, id string) (domain.Product, error)
 	GetBySlug(ctx context.Context, slug string) (domain.Product, error)
 
@@ -34,6 +41,10 @@ type ProductRepository interface {
 	// p.Images or removed. Otherwise the list changed since it was read:
 	// nothing is saved and *domain.StaleError comes back.
 	UpdateWithImages(ctx context.Context, p domain.Product, added, removed []string) (domain.Product, []domain.Image, error)
+
+	// SetArchived takes the product out of the collection, or puts it
+	// back where it was. Nothing else about it changes.
+	SetArchived(ctx context.Context, id string, archived bool) (domain.Product, error)
 	Delete(ctx context.Context, id string) error
 }
 
