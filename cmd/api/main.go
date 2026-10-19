@@ -121,6 +121,7 @@ func run() error {
 	app.Handle("GET /admin/products/{id}", private(rProduct.Edit))
 	app.Handle("POST /admin/products/{id}", private(rProduct.Update))
 	app.Handle("POST /admin/products/{id}/sold-out", private(rProduct.SetSoldOut))
+	app.Handle("POST /admin/products/{id}/colours/{colourID}/stock/{size}", private(rProduct.SetStock))
 	app.Handle("GET /admin/products/{id}/archive", private(rProduct.ConfirmArchive))
 	app.Handle("POST /admin/products/{id}/archive", private(rProduct.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(rProduct.Unarchive))

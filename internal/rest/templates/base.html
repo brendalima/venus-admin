@@ -15,6 +15,8 @@
     --ok-bg: #e8f3ea; --ok-text: #1f5b2c;
   }
   * { box-sizing: border-box; }
+  /* Rules below that set display would otherwise show what is hidden. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -125,7 +127,7 @@
   .tag.cover { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
   .tag.new { background: #fff4d6; color: #6b4e00; border-color: transparent; }
   .photo.removed img { opacity: .4; filter: grayscale(1); }
-  .removed-list h3 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+  .removed-list h5 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
   .pending {
     background: #fff4d6; color: #6b4e00; border-radius: .5rem; padding: .75rem 1rem; margin: 1rem 0 0;
   }
@@ -140,6 +142,28 @@
   .alert p { margin: 0; }
   .upload { margin-top: 1.25rem; }
   input[type=file] { display: block; width: 100%; font: inherit; padding: .5rem 0; }
+  .colour-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+  .colour {
+    margin: 1.25rem 0 0; padding: 1rem; border: 1px solid var(--border); border-radius: .75rem;
+  }
+  .colour.removing { background: var(--bg); }
+  .colour.removing .photo-section, .colour.removing .stock { opacity: .45; }
+  .colour-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+  .colour-title h3 { font-size: 1.1rem; margin: 0; }
+  .colour .photo-section { margin-top: 1.5rem; padding-top: 1rem; }
+  .colour h4 { font-size: 1rem; margin: 0 0 .25rem; }
+  .colour label:first-of-type { margin-top: .75rem; }
+  .stock-grid { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .5rem; }
+  .stock-size { display: flex; align-items: center; gap: .4rem; }
+  .stock-size label { margin: 0; min-width: 1.75rem; }
+  .stock-size input { width: 4.5rem; text-align: center; }
+  .add-colour { margin: 1.25rem 0 0; }
+  .stock-list { flex: 1 1 100%; display: grid; gap: .35rem; font-size: .95rem; }
+  .stock-colour { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; }
+  .stock-name { font-weight: 600; min-width: 4rem; }
+  .stock-sizes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
+  .stock-sizes li { display: flex; align-items: center; gap: .35rem; }
+  button.small { padding: .2rem .6rem; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -171,7 +195,7 @@
   {{else}}<span class="thumb" aria-hidden="true"></span>{{end}}
   <span>
     <strong>{{.Name}}</strong>
-    <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}{{if not .Images}} · Sem fotos{{end}}{{if .Archived}} · Arquivada em {{date .ArchivedAt}}{{end}}</span>
+    <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}{{if .TracksStock}} · {{.StockTotal}} em estoque{{end}}{{if not .Images}} · Sem fotos{{end}}{{if .Archived}} · Arquivada em {{date .ArchivedAt}}{{end}}</span>
     {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
   </span>
 </a>

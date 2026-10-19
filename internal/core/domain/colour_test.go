@@ -192,3 +192,19 @@ func validationFields(err error) []string {
 	walk(err)
 	return fields
 }
+
+func TestStockTotals(t *testing.T) {
+	bege := Colour{Name: "Bege", Stock: []Stock{{Size: "P", Quantity: 1}, {Size: "M", Quantity: 2}}}
+	vinho := Colour{Name: "Vinho", Stock: []Stock{{Size: "P", Quantity: 3}}}
+	if bege.Quantity("M") != 2 || bege.Quantity("G") != 0 {
+		t.Errorf("quantities M %d, G %d, want 2 and 0", bege.Quantity("M"), bege.Quantity("G"))
+	}
+
+	p := Product{Colours: []Colour{bege, {Name: "Preto"}, vinho}}
+	if !p.TracksStock() || p.StockTotal() != 6 {
+		t.Errorf("tracks %v, total %d, want true and 6", p.TracksStock(), p.StockTotal())
+	}
+	if (Product{Colours: []Colour{{Name: "Única"}}}).TracksStock() {
+		t.Error("a product whose colours have no entries tracks stock")
+	}
+}

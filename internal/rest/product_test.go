@@ -27,10 +27,10 @@ type mockProductService struct {
 	writeErr error // returned by Create, Update, SetSoldOut, SetArchived and Delete
 	created  []domain.Product
 	updated  []domain.Product
-	photoErr error               // returned by Create and Update when a photo edit is sent
-	edits    []*domain.PhotoEdit // the first colour's photo edit of every save, nil included
+	photoErr error // returned by Create and Update when a colour edit is sent
 
 	colourEdits []*domain.ColoursEdit // every colour edit received, nil included
+	stockSets   []string              // "<colour> <size> <quantity>" for every SetStock
 }
 
 func newMockProductService() *mockProductService {
@@ -88,14 +88,9 @@ func (m *mockProductService) GetByID(_ context.Context, id string) (domain.Produ
 
 func (m *mockProductService) Create(_ context.Context, p domain.Product, colours domain.ColoursEdit) (domain.Product, error) {
 	m.colourEdits = append(m.colourEdits, &colours)
-	var photos *domain.PhotoEdit
-	if len(colours.Colours) > 0 {
-		photos = &colours.Colours[0].Photos
-	}
-	m.edits = append(m.edits, photos)
 	p = p.Normalized()
 	p.Slug = domain.Slugify(p.Name)
-	images, err := m.applyPhotos(nil, photos, p.Validate())
+	applied, err := m.applyColours(nil, colours, p.Sizes, p.Validate())
 	if err != nil {
 		return domain.Product{}, err
 	}
@@ -103,21 +98,14 @@ func (m *mockProductService) Create(_ context.Context, p domain.Product, colours
 		return domain.Product{}, m.writeErr
 	}
 	p.ID = fmt.Sprintf("new-%d", len(m.created)+1)
-	p.Colours = []domain.Colour{{ID: p.ID + "-colour", Name: colours.Colours[0].Name, Images: images}}
+	p.Colours = applied
 	m.created = append(m.created, p)
 	m.products[p.ID] = p
 	return p, nil
 }
 
-// Update applies the edit of the first colour's photos alone, which is
-// all the form can send for now.
 func (m *mockProductService) Update(_ context.Context, p domain.Product, colours *domain.ColoursEdit) (domain.Product, error) {
 	m.colourEdits = append(m.colourEdits, colours)
-	var photos *domain.PhotoEdit
-	if colours != nil {
-		photos = &colours.Colours[0].Photos
-	}
-	m.edits = append(m.edits, photos)
 	p = p.Normalized()
 	if p.Slug = domain.Slugify(p.Slug); p.Slug == "" {
 		p.Slug = domain.Slugify(p.Name)
@@ -126,20 +114,20 @@ func (m *mockProductService) Update(_ context.Context, p domain.Product, colours
 	if !ok {
 		return domain.Product{}, fmt.Errorf("couldn't load product: %w", domain.NewNotFoundError("product not found"))
 	}
-	var currentImages []domain.Image
-	if len(current.Colours) > 0 {
-		currentImages = current.Colours[0].Images
-	}
-	images, err := m.applyPhotos(currentImages, photos, p.Validate())
-	if err != nil {
-		return domain.Product{}, err
+	p.Colours = current.Colours
+	if colours == nil {
+		if err := p.Validate(); err != nil {
+			return domain.Product{}, err
+		}
+	} else {
+		applied, err := m.applyColours(current.Colours, *colours, p.Sizes, p.Validate())
+		if err != nil {
+			return domain.Product{}, err
+		}
+		p.Colours = applied
 	}
 	if m.writeErr != nil {
 		return domain.Product{}, m.writeErr
-	}
-	p.Colours = slices.Clone(current.Colours)
-	if len(p.Colours) > 0 {
-		p.Colours[0].Images = images
 	}
 	p.ArchivedAt = current.ArchivedAt
 	m.updated = append(m.updated, p)
@@ -147,62 +135,96 @@ func (m *mockProductService) Update(_ context.Context, p domain.Product, colours
 	return p, nil
 }
 
-// applyPhotos follows the real service's rules closely enough for the
+// applyColours follows the real service's rules closely enough for the
 // handlers: every problem at once, a file reading "not a photo" refused by
-// index, and a photo the screen did not know about making the edit stale.
-func (m *mockProductService) applyPhotos(current []domain.Image, edit *domain.PhotoEdit, fieldErr error) ([]domain.Image, error) {
-	if edit == nil {
-		return current, fieldErr
-	}
+// colour and index, and a colour or photo the screen did not know about
+// making the edit stale. New colours get "added-<n>" IDs and new photos
+// "added-<n>-<i>", n being the colour's place in the edit.
+func (m *mockProductService) applyColours(current []domain.Colour, edit domain.ColoursEdit, sizes []string, fieldErr error) ([]domain.Colour, error) {
 	if m.photoErr != nil {
 		return nil, m.photoErr
 	}
-	e := *edit
-	if e.AppendNew {
-		e.Order = nil
-		for _, img := range current {
-			e.Order = append(e.Order, domain.PhotoSlot{ImageID: img.ID})
-		}
-		for i := range e.New {
-			e.Order = append(e.Order, domain.PhotoSlot{NewIndex: i})
+	byID := map[string]domain.Colour{}
+	for _, c := range current {
+		byID[c.ID] = c
+	}
+	e := edit.Normalized(sizes)
+	for n, c := range e.Colours {
+		if c.Photos.AppendNew {
+			order := []domain.PhotoSlot{}
+			for _, img := range byID[c.ID].Images {
+				order = append(order, domain.PhotoSlot{ImageID: img.ID})
+			}
+			for i := range c.Photos.New {
+				order = append(order, domain.PhotoSlot{NewIndex: i})
+			}
+			e.Colours[n].Photos = domain.PhotoEdit{Order: order, New: c.Photos.New}
 		}
 	}
-	if err := e.Validate(); err != nil {
-		var v *domain.ValidationError
-		errors.As(err, &v)
-		return nil, errors.Join(fieldErr, domain.NewValidationError(domain.ColourField(0, v.Field), v.Message))
+	if err := e.ValidateLists(); err != nil {
+		return nil, errors.Join(fieldErr, e.Validate(), err)
 	}
-	byID := map[string]domain.Image{}
-	for _, img := range current {
-		byID[img.ID] = img
-	}
-	errs := []error{fieldErr}
-	for i, src := range e.New {
-		data, err := src.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		if string(data) == notAPhoto {
-			errs = append(errs, domain.NewValidationError(domain.ColourField(0, domain.PhotoErrorField(i)), "Esse arquivo não é uma foto em JPEG, PNG ou WebP."))
+	errs := []error{fieldErr, e.Validate()}
+	for n, c := range e.Colours {
+		for i, src := range c.Photos.New {
+			data, err := src.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			if string(data) == notAPhoto {
+				errs = append(errs, domain.NewValidationError(domain.ColourField(n, domain.PhotoErrorField(i)), "Esse arquivo não é uma foto em JPEG, PNG ou WebP."))
+			}
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	images := []domain.Image{}
-	for _, slot := range e.Order {
-		if slot.ImageID == "" {
-			id := fmt.Sprintf("added-%d", slot.NewIndex)
-			images = append(images, domain.Image{ID: id, Key600: "produtos/" + id + "-600.jpg"})
+
+	stale := domain.NewStaleError("colours or photos changed since they were loaded")
+	mentioned := 0
+	for _, id := range e.Removed {
+		if _, ok := byID[id]; ok {
+			mentioned++
+		}
+	}
+	out := []domain.Colour{}
+	for n, c := range e.Colours {
+		if c.Blank() {
 			continue
 		}
-		img, ok := byID[slot.ImageID]
-		if !ok {
-			return nil, domain.NewStaleError("photos changed since they were loaded")
+		stored, ok := byID[c.ID]
+		if c.ID != "" {
+			if !ok {
+				return nil, stale
+			}
+			mentioned++
 		}
-		images = append(images, img)
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock, Images: []domain.Image{}}
+		if colour.ID == "" {
+			colour.ID = fmt.Sprintf("added-%d", n)
+		}
+		images := map[string]domain.Image{}
+		for _, img := range stored.Images {
+			images[img.ID] = img
+		}
+		for _, slot := range c.Photos.Order {
+			if slot.ImageID == "" {
+				id := fmt.Sprintf("added-%d-%d", n, slot.NewIndex)
+				colour.Images = append(colour.Images, domain.Image{ID: id, ColourID: colour.ID, Key600: "produtos/" + id + "-600.jpg"})
+				continue
+			}
+			img, ok := images[slot.ImageID]
+			if !ok {
+				return nil, stale
+			}
+			colour.Images = append(colour.Images, img)
+		}
+		out = append(out, colour)
 	}
-	return images, nil
+	if mentioned != len(current) {
+		return nil, stale
+	}
+	return out, nil
 }
 
 func (m *mockProductService) SetSoldOut(_ context.Context, id string, soldOut bool) (domain.Product, error) {
@@ -234,8 +256,35 @@ func (m *mockProductService) SetArchived(_ context.Context, id string, archived 
 	return p, nil
 }
 
-func (m *mockProductService) SetStock(context.Context, string, string, string, int32) (domain.Product, error) {
-	return domain.Product{}, errors.New("no handler sets stock yet")
+// SetStock checks what the real service checks: the colour, and that the
+// size is one of the product's.
+func (m *mockProductService) SetStock(_ context.Context, productID, colourID, size string, quantity int32) (domain.Product, error) {
+	m.stockSets = append(m.stockSets, fmt.Sprintf("%s %s %d", colourID, size, quantity))
+	if m.writeErr != nil {
+		return domain.Product{}, m.writeErr
+	}
+	p, ok := m.products[productID]
+	if !ok {
+		return domain.Product{}, domain.NewNotFoundError("product not found")
+	}
+	i := slices.IndexFunc(p.Colours, func(c domain.Colour) bool { return c.ID == colourID })
+	if i < 0 {
+		return domain.Product{}, domain.NewNotFoundError("colour not found")
+	}
+	if !slices.Contains(p.Sizes, size) {
+		return domain.Product{}, domain.NewValidationError("size", "Essa peça não tem o tamanho "+size)
+	}
+	p.Colours = slices.Clone(p.Colours)
+	c := p.Colours[i]
+	c.Stock = slices.Clone(c.Stock)
+	if j := slices.IndexFunc(c.Stock, func(s domain.Stock) bool { return s.Size == size }); j >= 0 {
+		c.Stock[j].Quantity = quantity
+	} else {
+		c.Stock = append(c.Stock, domain.Stock{Size: size, Quantity: quantity})
+	}
+	p.Colours[i] = c
+	m.products[productID] = p
+	return p, nil
 }
 
 func (m *mockProductService) Delete(_ context.Context, id string) error {
@@ -257,13 +306,20 @@ func aurora() domain.Product {
 	}
 }
 
+// validForm is the product form with one new colour, as the new product
+// page sends it.
 func validForm() url.Values {
 	return url.Values{
-		"name":        {"Biquíni Aurora"},
-		"price":       {"189,90"},
-		"sizes":       {"P", "M"},
-		"description": {"Triângulo verde"},
-		"details":     {"Verde esmeralda\r\n\r\nForro duplo\r\n"},
+		"name":             {"Biquíni Aurora"},
+		"price":            {"189,90"},
+		"sizes":            {"P", "M"},
+		"description":      {"Triângulo verde"},
+		"details":          {"Verde esmeralda\r\n\r\nForro duplo\r\n"},
+		colourKeyField:     {"0"},
+		"colour_0_id":      {""},
+		"colour_0_name":    {"Bege"},
+		"colour_0_stock_P": {""},
+		"colour_0_stock_M": {""},
 	}
 }
 

@@ -48,6 +48,17 @@ type Stock struct {
 // rather than left to work it out.
 func (c Colour) TracksStock() bool { return len(c.Stock) > 0 }
 
+// Quantity is how many pieces of size the colour has. A size without an
+// entry has none, which only means "unavailable" when TracksStock.
+func (c Colour) Quantity(size string) int32 {
+	for _, s := range c.Stock {
+		if s.Size == size {
+			return s.Quantity
+		}
+	}
+	return 0
+}
+
 // ColourField is the ValidationError field for field of the colour at
 // index n of a ColoursEdit, such as "colours.1.name".
 func ColourField(n int, field string) string {

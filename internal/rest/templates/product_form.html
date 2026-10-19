@@ -10,11 +10,12 @@
   <h1>{{if .ID}}Editar peça{{else}}Nova peça{{end}}</h1>
   {{if .Archived}}<p class="muted">Peça arquivada: não aparece no site. Para trazê-la de volta, use o botão no fim da página.</p>{{end}}
 
-  {{/* photos.js sends this form itself, with the photos as arranged on
-       screen. Without JavaScript it posts as it is, and new photos go
-       after the existing ones. The data-* regions are what photos.js
-       swaps in from the answer when the save is refused, so the photos
-       chosen stay on screen. */}}
+  {{/* photos.js sends this form itself, with each colour's photos as
+       arranged on screen. Without JavaScript it posts as it is, and new
+       photos go after the colour's existing ones. The data-* regions are
+       what photos.js swaps in from the answer when the save is refused,
+       so the photos chosen stay on screen: the colour blocks, which hold
+       them, must stay outside data-fields. */}}
   <form method="post" action="{{if .ID}}/admin/products/{{.ID}}{{else}}/admin/products{{end}}"
         enctype="multipart/form-data" novalidate data-product-form>
     <div data-form-messages>
@@ -62,7 +63,7 @@
 
       <label class="check" for="sold_out">
         <input id="sold_out" name="sold_out" type="checkbox" {{if .Form.SoldOut}}checked{{end}}>
-        <span>Esgotada <span class="hint">— continua no site, com o aviso “Esgotado”</span></span>
+        <span>Esgotada <span class="hint">— continua no site, com o aviso “Esgotado”, mesmo que ainda haja quantidade cadastrada</span></span>
       </label>
 
       {{if .ID}}
@@ -79,44 +80,33 @@
       {{end}}
     </div>
 
-    <section class="photo-section" id="fotos" aria-labelledby="fotos-title"
-             data-photos data-max="{{.MaxPhotos}}" data-max-mb="{{.MaxPhotoMB}}">
-      <h2 id="fotos-title">Fotos</h2>
-      <p class="hint">A primeira é a capa, que aparece na lista do site. Nada muda nas fotos até você clicar em “{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}”.</p>
+    <section class="colour-section" id="cores" aria-labelledby="cores-title" data-colours data-next-key="{{.NextColourKey}}" data-max-colours="{{.MaxColours}}">
+      <h2 id="cores-title">Cores e estoque</h2>
+      <p class="hint">Cada cor tem as fotos dela. No site, quem escolhe a cor vê essas fotos. Nada muda nas cores e nas fotos até você clicar em “{{.SaveLabel}}”.</p>
 
-      <div data-photo-errors>
-        {{if .PhotoErrors}}
-        <div class="alert" role="alert">
-          <p>Não deu para usar {{if eq (len .PhotoErrors) 1}}esta foto{{else}}estas fotos{{end}}:</p>
-          <ul>{{range .PhotoErrors}}<li>{{.}}</li>{{end}}</ul>
-        </div>
+      <div data-colour-errors>
+        {{if .ColourErrors}}
+        <div class="alert" role="alert">{{range .ColourErrors}}<p>{{.}}</p>{{end}}</div>
         {{end}}
       </div>
 
-      <ol class="photos" data-photo-list>
-        {{range $i, $p := .Photos}}
-        <li class="photo" data-id="{{$p.ID}}" data-src="{{imageURL $p.Key600}}">
-          <img src="{{imageURL $p.Key600}}" alt="Foto {{add $i 1}}" loading="lazy">
-          {{if eq $i 0}}<div class="photo-actions"><span class="tag cover">Capa</span></div>{{end}}
-        </li>
-        {{end}}
-      </ol>
-      <p class="muted" data-photo-empty {{if .Photos}}hidden{{end}}>Ainda sem fotos. Sem foto, a peça aparece no site com um espaço vazio.</p>
-      <div data-photo-removed></div>
-      <p class="pending" data-photo-status role="status" aria-live="polite" hidden></p>
-      <noscript><p class="hint">Para mudar a ordem ou tirar fotos, o navegador precisa estar com o JavaScript ativado. Sem ele, as fotos escolhidas abaixo entram depois das que já existem.</p></noscript>
-
-      <div class="upload">
-        <label for="photos">Adicionar fotos</label>
-        <input id="photos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple
-               aria-describedby="photos-hint">
-        <p class="hint" id="photos-hint">Pode escolher várias de uma vez: até {{.MaxPhotos}} por peça, com até {{.MaxPhotoMB}} MB cada.</p>
-        <div data-photo-pick-errors></div>
+      <div data-colour-list>
+        {{range .ColourViews}}{{template "colour-block" .}}{{end}}
       </div>
+      {{with .ExtraColour}}
+      <noscript>
+        <p class="hint">Para cadastrar mais uma cor, preencha o bloco abaixo e salve. Deixe-o vazio se não quiser outra cor.</p>
+        {{template "colour-block" .}}
+      </noscript>
+      {{end}}
+      <template data-colour-template>{{template "colour-block" .NewColourTemplate}}</template>
+      <p class="add-colour" data-add-colour-row hidden>
+        <button type="button" class="secondary" data-add-colour>Adicionar outra cor</button>
+      </p>
     </section>
 
     <div class="actions">
-      <button type="submit" data-submit>{{if .ID}}Salvar alterações{{else}}Cadastrar peça{{end}}</button>
+      <button type="submit" data-submit>{{.SaveLabel}}</button>
       <a href="{{if .Archived}}/admin/arquivadas{{else}}/admin{{end}}">Cancelar</a>
     </div>
   </form>
@@ -135,4 +125,89 @@
 {{else if .ID}}
 <p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar da coleção</a></p>
 {{end}}
+{{end}}
+
+{{/* One colour: its name, quantities and photos. Its key names its fields
+     (see rest/colour.go). data-colour-fields and data-photo-errors are
+     what photos.js swaps in from a refused save; the photo list is left
+     alone. */}}
+{{define "colour-block"}}
+<fieldset class="colour{{if .Remove}} removing{{end}}" data-colour="{{.Key}}" aria-labelledby="colour-{{.Key}}-title">
+  <input type="hidden" name="colour_key" value="{{.Key}}">
+  <input type="hidden" name="colour_{{.Key}}_id" value="{{.ID}}">
+  <div class="colour-title">
+    <h3 id="colour-{{.Key}}-title" data-colour-title>Cor {{if .Number}}{{.Number}}{{end}}</h3>
+    {{if not .ID}}<button type="button" class="secondary" data-drop-colour {{if .Only}}hidden{{end}}>Tirar esta cor</button>{{end}}
+  </div>
+
+  <div data-colour-fields="{{.Key}}">
+    {{$k := .Key}}
+    <label for="colour-{{.Key}}-name">Nome da cor</label>
+    <input id="colour-{{.Key}}-name" name="colour_{{.Key}}_name" type="text" value="{{.Name}}"
+           placeholder="Bege" autocomplete="off"
+           aria-describedby="{{with index .Errors "name"}}colour-{{$k}}-name-error {{end}}colour-{{.Key}}-name-hint"
+           {{with index .Errors "name"}}aria-invalid="true"{{end}}>
+    <p class="hint" id="colour-{{.Key}}-name-hint">Como vocês chamam a cor: Bege, Vinho, Verde-água.</p>
+    {{with index .Errors "name"}}<p class="field-error" id="colour-{{$k}}-name-error">{{.}}</p>{{end}}
+
+    <fieldset class="stock" aria-describedby="colour-{{.Key}}-stock-hint">
+      <legend>Quantidade em estoque</legend>
+      <p class="hint" id="colour-{{.Key}}-stock-hint">Uma quantidade por tamanho. Deixe vazio o tamanho que você não controla; escreva 0 no que acabou — no site ele aparece como “indisponível”.</p>
+      <div class="stock-grid">
+        {{range .Stock}}
+        <div class="stock-size" data-stock-size="{{.Size}}" {{if not .Shown}}hidden{{end}}>
+          <label for="colour-{{$k}}-stock-{{.Size}}">{{.Size}}</label>
+          <input id="colour-{{$k}}-stock-{{.Size}}" name="colour_{{$k}}_stock_{{.Size}}" type="text"
+                 inputmode="numeric" value="{{.Value}}" autocomplete="off"
+                 {{if .Error}}aria-invalid="true" aria-describedby="colour-{{$k}}-stock-{{.Size}}-error"{{end}}>
+        </div>
+        {{end}}
+      </div>
+      {{range .Stock}}{{if .Error}}<p class="field-error" id="colour-{{$k}}-stock-{{.Size}}-error">{{.Size}}: {{.Error}}</p>{{end}}{{end}}
+      <p class="muted" data-stock-empty {{if .HasSizes}}hidden{{end}}>Marque os tamanhos acima para lançar as quantidades.</p>
+    </fieldset>
+
+    {{if .ID}}
+    <label class="check" for="colour-{{.Key}}-remove">
+      <input id="colour-{{.Key}}-remove" name="colour_{{.Key}}_remove" type="checkbox" data-remove-colour {{if .Remove}}checked{{end}}>
+      <span>Apagar esta cor e as fotos dela ao salvar</span>
+    </label>
+    {{end}}
+  </div>
+
+  <div class="photo-section" data-photos data-max="{{.MaxPhotos}}" data-max-mb="{{.MaxPhotoMB}}">
+    <h4>Fotos desta cor</h4>
+    <p class="hint">A primeira é a capa. A capa da primeira cor é a que aparece na lista do site.</p>
+
+    <div data-photo-errors="{{.Key}}">
+      {{if .PhotoErrors}}
+      <div class="alert" role="alert">
+        <p>Não deu para usar {{if eq (len .PhotoErrors) 1}}esta foto{{else}}estas fotos{{end}}:</p>
+        <ul>{{range .PhotoErrors}}<li>{{.}}</li>{{end}}</ul>
+      </div>
+      {{end}}
+    </div>
+
+    <ol class="photos" data-photo-list>
+      {{range $i, $p := .Photos}}
+      <li class="photo" data-id="{{$p.ID}}" data-src="{{imageURL $p.Key600}}">
+        <img src="{{imageURL $p.Key600}}" alt="Foto {{add $i 1}}" loading="lazy">
+        {{if eq $i 0}}<div class="photo-actions"><span class="tag cover">Capa</span></div>{{end}}
+      </li>
+      {{end}}
+    </ol>
+    <p class="muted" data-photo-empty {{if .Photos}}hidden{{end}}>Ainda sem fotos nesta cor.</p>
+    <div data-photo-removed></div>
+    <p class="pending" data-photo-status role="status" aria-live="polite" hidden></p>
+    {{if not .Extra}}<noscript><p class="hint">Para mudar a ordem ou tirar fotos, o navegador precisa estar com o JavaScript ativado. Sem ele, as fotos escolhidas abaixo entram depois das que já existem.</p></noscript>{{end}}
+
+    <div class="upload">
+      <label for="colour-{{.Key}}-photos">Adicionar fotos desta cor</label>
+      <input id="colour-{{.Key}}-photos" name="photos_{{.Key}}" type="file" accept="image/jpeg,image/png,image/webp" multiple
+             aria-describedby="colour-{{.Key}}-photos-hint">
+      <p class="hint" id="colour-{{.Key}}-photos-hint">Pode escolher várias de uma vez: até {{.MaxPhotos}} por cor, com até {{.MaxPhotoMB}} MB cada.</p>
+      <div data-photo-pick-errors></div>
+    </div>
+  </div>
+</fieldset>
 {{end}}

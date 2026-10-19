@@ -1,46 +1,38 @@
-// The photo section of the product form.
+// The colour section of the product form: one block per colour, each with
+// its own photo list.
 //
 // Nothing reaches the server until the form is saved: photos chosen here
-// are shown from the browser's memory, and reordering, the cover and
-// removals only change what is on screen. Saving sends the fields and the
-// photos together; the server applies all of it or none. If it refuses
-// (a field to fix, a file that is not a photo), only the messages are
-// swapped in from its answer, and the photos stay as arranged.
+// are shown from the browser's memory, and reordering, the cover,
+// removals and new colours only change what is on screen. Saving sends
+// the fields, the colours and their photos together; the server applies
+// all of it or none. If it refuses (a field to fix, a file that is not a
+// photo), only the messages and the typed fields are swapped in from its
+// answer, block by block, and the photos stay as arranged.
 //
-// Without JavaScript the form still posts, and new photos go after the
-// existing ones (see rest/photo.go).
+// Without JavaScript the form still posts, and each colour's new photos
+// go after its existing ones (see rest/colour.go).
 (() => {
   "use strict";
 
   const form = document.querySelector("[data-product-form]");
-  const section = form && form.querySelector("[data-photos]");
-  if (!section) return;
+  const coloursBox = form && form.querySelector("[data-colours]");
+  if (!coloursBox) return;
 
-  const max = Number(section.dataset.max);
-  const maxMB = Number(section.dataset.maxMb);
   const accepted = ["image/jpeg", "image/png", "image/webp"];
-
-  const list = section.querySelector("[data-photo-list]");
-  const empty = section.querySelector("[data-photo-empty]");
-  const removedBox = section.querySelector("[data-photo-removed]");
-  const status = section.querySelector("[data-photo-status]");
-  const pickErrors = section.querySelector("[data-photo-pick-errors]");
-  const input = section.querySelector("input[type=file]");
+  const colourList = coloursBox.querySelector("[data-colour-list]");
+  const template = coloursBox.querySelector("[data-colour-template]");
+  const addRow = coloursBox.querySelector("[data-add-colour-row]");
+  const addButton = coloursBox.querySelector("[data-add-colour]");
+  const maxColours = Number(coloursBox.dataset.maxColours);
   const submit = form.querySelector("[data-submit]");
-  const submitLabel = submit.textContent;
+  const submitLabel = submit.textContent.trim();
 
-  // { kind: "existing", id, url } or { kind: "new", file, url }
-  let items = [...list.querySelectorAll("[data-id]")].map((li) => ({
-    kind: "existing",
-    id: li.dataset.id,
-    url: li.dataset.src,
-  }));
-  let removed = []; // existing items to delete on save
+  // Keys name a block's fields. They only grow: reusing the key of a
+  // block taken off would mix two colours' fields in the form data.
+  let nextKey = Number(coloursBox.dataset.nextKey);
+  const sections = new Map(); // block key -> photo section
   let dirty = false;
   let saving = false;
-
-  // The files are sent from items, in their order, not from the field.
-  input.removeAttribute("name");
 
   const el = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
@@ -55,99 +47,210 @@
   const button = (label, onclick, ariaLabel) =>
     el("button", { type: "button", class: "secondary", onclick, ...(ariaLabel ? { "aria-label": ariaLabel } : {}) }, label);
 
-  function changed() {
-    dirty = true;
-    render();
-  }
+  const blocks = () => [...colourList.querySelectorAll("[data-colour]")];
 
-  function move(from, to) {
-    const [item] = items.splice(from, 1);
-    items.splice(to, 0, item);
-    changed();
-  }
+  // photoSection runs the photo list of one colour block.
+  function photoSection(block) {
+    const key = block.dataset.colour;
+    const section = block.querySelector("[data-photos]");
+    const max = Number(section.dataset.max);
+    const maxMB = Number(section.dataset.maxMb);
+    const list = section.querySelector("[data-photo-list]");
+    const empty = section.querySelector("[data-photo-empty]");
+    const removedBox = section.querySelector("[data-photo-removed]");
+    const status = section.querySelector("[data-photo-status]");
+    const pickErrors = section.querySelector("[data-photo-pick-errors]");
+    const input = section.querySelector("input[type=file]");
 
-  function remove(i) {
-    const [item] = items.splice(i, 1);
-    if (item.kind === "existing") removed.push(item);
-    else URL.revokeObjectURL(item.url);
-    changed();
-  }
+    // { kind: "existing", id, url } or { kind: "new", file, url }
+    let items = [...list.querySelectorAll("[data-id]")].map((li) => ({
+      kind: "existing",
+      id: li.dataset.id,
+      url: li.dataset.src,
+    }));
+    let removed = []; // existing items to delete on save
+    let changedHere = false;
 
-  function restore(i) {
-    const [item] = removed.splice(i, 1);
-    items.push(item);
-    changed();
-  }
+    // The files are sent from items, in their order, not from the field.
+    input.removeAttribute("name");
 
-  function render() {
-    list.replaceChildren(
-      ...items.map((item, i) => {
-        const n = i + 1;
-        const actions = el("div", { class: "photo-actions" });
-        if (i === 0) actions.append(el("span", { class: "tag cover" }, "Capa"));
-        if (item.kind === "new") actions.append(el("span", { class: "tag new" }, "Nova"));
-        if (i > 0) {
-          actions.append(button("Usar como capa", () => move(i, 0), `Usar a foto ${n} como capa`));
-          actions.append(button("↑ Antes", () => move(i, i - 1), `Passar a foto ${n} para antes`));
-        }
-        if (i < items.length - 1) {
-          actions.append(button("↓ Depois", () => move(i, i + 1), `Passar a foto ${n} para depois`));
-        }
-        actions.append(button("Tirar", () => remove(i), `Tirar a foto ${n}`));
-        return el("li", { class: "photo" }, el("img", { src: item.url, alt: `Foto ${n}` }), actions);
-      }),
-    );
-    empty.hidden = items.length > 0;
+    function changed() {
+      changedHere = true;
+      dirty = true;
+      render();
+    }
 
-    removedBox.replaceChildren();
-    if (removed.length > 0) {
-      removedBox.append(
-        el("div", { class: "removed-list" },
-          el("h3", {}, "Serão apagadas ao salvar"),
-          el("ol", { class: "photos" },
-            ...removed.map((item, i) =>
-              el("li", { class: "photo removed" },
-                el("img", { src: item.url, alt: "Foto que será apagada" }),
-                el("div", { class: "photo-actions" }, button("Desfazer", () => restore(i), "Manter esta foto")),
+    function move(from, to) {
+      const [item] = items.splice(from, 1);
+      items.splice(to, 0, item);
+      changed();
+    }
+
+    function remove(i) {
+      const [item] = items.splice(i, 1);
+      if (item.kind === "existing") removed.push(item);
+      else URL.revokeObjectURL(item.url);
+      changed();
+    }
+
+    function restore(i) {
+      const [item] = removed.splice(i, 1);
+      items.push(item);
+      changed();
+    }
+
+    function render() {
+      list.replaceChildren(
+        ...items.map((item, i) => {
+          const n = i + 1;
+          const actions = el("div", { class: "photo-actions" });
+          if (i === 0) actions.append(el("span", { class: "tag cover" }, "Capa"));
+          if (item.kind === "new") actions.append(el("span", { class: "tag new" }, "Nova"));
+          if (i > 0) {
+            actions.append(button("Usar como capa", () => move(i, 0), `Usar a foto ${n} como capa`));
+            actions.append(button("↑ Antes", () => move(i, i - 1), `Passar a foto ${n} para antes`));
+          }
+          if (i < items.length - 1) {
+            actions.append(button("↓ Depois", () => move(i, i + 1), `Passar a foto ${n} para depois`));
+          }
+          actions.append(button("Tirar", () => remove(i), `Tirar a foto ${n}`));
+          return el("li", { class: "photo" }, el("img", { src: item.url, alt: `Foto ${n}` }), actions);
+        }),
+      );
+      empty.hidden = items.length > 0;
+
+      removedBox.replaceChildren();
+      if (removed.length > 0) {
+        removedBox.append(
+          el("div", { class: "removed-list" },
+            el("h5", {}, "Serão apagadas ao salvar"),
+            el("ol", { class: "photos" },
+              ...removed.map((item, i) =>
+                el("li", { class: "photo removed" },
+                  el("img", { src: item.url, alt: "Foto que será apagada" }),
+                  el("div", { class: "photo-actions" }, button("Desfazer", () => restore(i), "Manter esta foto")),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
+      }
+
+      const full = items.length >= max;
+      input.disabled = full;
+      status.hidden = !changedHere;
+      status.textContent = changedHere
+        ? `As mudanças nas fotos desta cor ainda não foram salvas. Elas só valem depois de “${submitLabel}”.` +
+          (full ? ` Esta cor está com ${max} fotos, o máximo.` : "")
+        : "";
     }
 
-    const full = items.length >= max;
-    input.disabled = full;
-    status.hidden = !dirty;
-    status.textContent = dirty
-      ? `As mudanças nas fotos ainda não foram salvas. Elas só valem depois de “${submitLabel.trim()}”.` +
-        (full ? ` A peça está com ${max} fotos, o máximo.` : "")
-      : "";
+    input.addEventListener("change", () => {
+      const problems = [];
+      const left = [];
+      for (const file of input.files) {
+        if (!accepted.includes(file.type)) {
+          problems.push(`${file.name}: não é uma foto em JPEG, PNG ou WebP.`);
+        } else if (file.size > maxMB * 1024 * 1024) {
+          problems.push(`${file.name}: passa de ${maxMB} MB.`);
+        } else if (items.length >= max) {
+          left.push(file.name);
+        } else {
+          items.push({ kind: "new", file, url: URL.createObjectURL(file) });
+          changedHere = true;
+          dirty = true;
+        }
+      }
+      if (left.length > 0) {
+        problems.push(`Cada cor pode ter até ${max} fotos; ficaram de fora: ${left.join(", ")}.`);
+      }
+      input.value = "";
+      pickErrors.replaceChildren(
+        ...(problems.length === 0 ? [] : [el("div", { class: "alert", role: "alert" }, ...problems.map((p) => el("p", {}, p)))]),
+      );
+      render();
+    });
+
+    render();
+    return {
+      // collect adds the colour's photos to data, as rest/colour.go reads
+      // them, and returns how many files it added.
+      collect(data) {
+        const order = [];
+        let newCount = 0;
+        for (const item of items) {
+          if (item.kind === "existing") {
+            order.push("id:" + item.id);
+          } else {
+            order.push("new:" + newCount++);
+            data.append("photos_" + key, item.file, item.file.name);
+          }
+        }
+        data.set("photo_order_" + key, order.join(","));
+        for (const item of removed) data.append("photo_remove_" + key, item.id);
+        return newCount;
+      },
+      drop() {
+        for (const item of items) if (item.kind === "new") URL.revokeObjectURL(item.url);
+      },
+    };
   }
 
-  input.addEventListener("change", () => {
-    const problems = [];
-    const left = [];
-    for (const file of input.files) {
-      if (!accepted.includes(file.type)) {
-        problems.push(`${file.name}: não é uma foto em JPEG, PNG ou WebP.`);
-      } else if (file.size > maxMB * 1024 * 1024) {
-        problems.push(`${file.name}: passa de ${maxMB} MB.`);
-      } else if (items.length >= max) {
-        left.push(file.name);
-      } else {
-        items.push({ kind: "new", file, url: URL.createObjectURL(file) });
-        dirty = true;
-      }
+  // Quantities are asked only for the sizes ticked above.
+  function syncSizes() {
+    const ticked = new Set([...form.querySelectorAll("input[name=sizes]:checked")].map((i) => i.value));
+    for (const field of coloursBox.querySelectorAll("[data-stock-size]")) {
+      field.hidden = !ticked.has(field.dataset.stockSize);
     }
-    if (left.length > 0) {
-      problems.push(`Cada peça pode ter até ${max} fotos; ficaram de fora: ${left.join(", ")}.`);
-    }
-    input.value = "";
-    pickErrors.replaceChildren(
-      ...(problems.length === 0 ? [] : [el("div", { class: "alert", role: "alert" }, ...problems.map((p) => el("p", {}, p)))]),
-    );
-    render();
+    for (const note of coloursBox.querySelectorAll("[data-stock-empty]")) note.hidden = ticked.size > 0;
+  }
+
+  function syncBlocks() {
+    const all = blocks();
+    all.forEach((block, i) => {
+      block.querySelector("[data-colour-title]").textContent = `Cor ${i + 1}`;
+      const drop = block.querySelector("[data-drop-colour]");
+      if (drop) drop.hidden = all.length <= 1;
+      const removing = block.querySelector("[data-remove-colour]");
+      block.classList.toggle("removing", Boolean(removing && removing.checked));
+    });
+    addButton.disabled = all.length >= maxColours;
+  }
+
+  function startBlock(block) {
+    sections.set(block.dataset.colour, photoSection(block));
+  }
+
+  addButton.addEventListener("click", () => {
+    const holder = document.createElement("div");
+    holder.innerHTML = template.innerHTML.replaceAll("__N__", String(nextKey++));
+    const block = holder.querySelector("[data-colour]");
+    colourList.append(block);
+    startBlock(block);
+    syncBlocks();
+    syncSizes();
+    dirty = true;
+    block.querySelector("input[type=text]").focus();
+  });
+
+  colourList.addEventListener("click", (e) => {
+    const drop = e.target.closest("[data-drop-colour]");
+    if (!drop) return;
+    const block = drop.closest("[data-colour]");
+    sections.get(block.dataset.colour).drop();
+    sections.delete(block.dataset.colour);
+    block.remove();
+    syncBlocks();
+    dirty = true;
+    addButton.focus();
+  });
+
+  form.addEventListener("change", (e) => {
+    if (e.target.matches("input[name=sizes]")) syncSizes();
+    if (e.target.matches("[data-remove-colour]")) syncBlocks();
+  });
+  form.addEventListener("input", () => {
+    dirty = true;
   });
 
   window.addEventListener("beforeunload", (e) => {
@@ -161,23 +264,21 @@
     form.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // swapIn replaces the region of the form matching selector with the
+  // answer's, when the answer has one.
+  function swapIn(doc, selector, within = form) {
+    const fresh = doc.querySelector(selector);
+    const current = within.querySelector(selector);
+    if (fresh && current) current.replaceWith(fresh);
+  }
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (saving) return;
 
     const data = new FormData(form);
-    const order = [];
     let newCount = 0;
-    for (const item of items) {
-      if (item.kind === "existing") {
-        order.push("id:" + item.id);
-      } else {
-        order.push("new:" + newCount++);
-        data.append("photos", item.file, item.file.name);
-      }
-    }
-    data.set("photo_order", order.join(","));
-    for (const item of removed) data.append("photo_remove", item.id);
+    for (const section of sections.values()) newCount += section.collect(data);
 
     saving = true;
     submit.disabled = true;
@@ -195,18 +296,23 @@
       }
 
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-      const fields = doc.querySelector("[data-fields]");
-      if (!fields) {
+      if (!doc.querySelector("[data-fields]")) {
         const title = doc.querySelector("h1");
         const text = doc.querySelector("main p");
         showAlert([title && title.textContent, text && text.textContent].filter(Boolean).join(". ") ||
           "Não consegui salvar agora. Nada foi salvo: tente de novo em instantes.");
         return;
       }
-      for (const region of ["[data-form-messages]", "[data-fields]", "[data-photo-errors]"]) {
-        const fresh = doc.querySelector(region);
-        if (fresh) form.querySelector(region).replaceWith(fresh);
+      for (const region of ["[data-form-messages]", "[data-fields]", "[data-colour-errors]"]) swapIn(doc, region);
+      // The colour blocks themselves stay, photos and all: only what was
+      // typed in them and their messages come from the answer.
+      for (const block of blocks()) {
+        const key = block.dataset.colour;
+        swapIn(doc, `[data-colour-fields="${key}"]`, block);
+        swapIn(doc, `[data-photo-errors="${key}"]`, block);
       }
+      syncBlocks();
+      syncSizes();
       form.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch {
       showAlert("Não consegui falar com o painel. Confira a internet e tente de novo. Nada foi salvo.");
@@ -217,5 +323,8 @@
     }
   });
 
-  render();
+  for (const block of blocks()) startBlock(block);
+  addRow.hidden = false;
+  syncBlocks();
+  syncSizes();
 })();

@@ -40,6 +40,7 @@ func NewTemplates(imageBaseURL string) (*Templates, error) {
 		"imageURL": func(key string) string { return imageBaseURL + "/" + key },
 		"asset":    assetURL,
 		"date":     formatDate,
+		"less":     func(q int32) int32 { return q - 1 },
 	}
 
 	pages, err := fs.Glob(templatesFS, "templates/*.html")
