@@ -112,6 +112,7 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `GET /admin/products/{id}` | Edit form |
 | `POST /admin/products/{id}` | Saves the edits |
 | `POST /admin/products/{id}/sold-out` | Sets sold out (form: `sold_out=true\|false`); answers the list row to HTMX |
+| `POST /admin/products/{id}/colours/{colourID}/stock/{size}` | The list's "−" and "+": sets that size's quantity (form: `quantity=<n>`, the quantity wanted, not a change); answers the list row to HTMX |
 | `GET /admin/products/{id}/archive` | Asks for confirmation before taking the product out of the collection |
 | `POST /admin/products/{id}/archive` | Archives it: off the site on the next publish, kept with its photos |
 | `POST /admin/products/{id}/unarchive` | Puts it back in the collection, in its old place; answers a row saying so to HTMX |
@@ -120,7 +121,7 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `POST /admin/products/{id}/delete` | Deletes it for good, and its photo files |
 | `POST /admin/publish` | Starts the site's rebuild (below) |
 
-Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the photos: `photos` (files), `photo_order` (the final order, cover first: `id:<image id>` for a photo the product has, `new:<n>` for the nth file) and `photo_remove` (repeated, photos to delete). Without `photo_order`, as from a browser without JavaScript, the files go after the existing photos.
+Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the colours. `colour_key` (repeated) lists the colour blocks in order; each block's key `<k>` names its fields: `colour_<k>_id` (empty for a new colour), `colour_<k>_name`, `colour_<k>_stock_<size>` (a quantity, or empty when that size is not counted), `colour_<k>_remove` (deletes an existing colour, photos and stock included), and its photos: `photos_<k>` (files), `photo_order_<k>` (the final order, cover first: `id:<image id>` for a photo the colour has, `new:<n>` for its nth file) and `photo_remove_<k>` (repeated, photos to delete). Keys are not positions and may have gaps. Without `photo_order_<k>`, as from a browser without JavaScript, the colour's files go after its existing photos.
 
 - **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
 - **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
@@ -129,11 +130,13 @@ Product form fields (`multipart/form-data`, since photos go with them): `name`, 
 
 ### Photos
 
-In the product form, under "Fotos", up to **12 per product**, each up to 15 MB. The first is the cover; "↑ Antes", "↓ Depois", "Usar como capa" and "Tirar" arrange them.
+In the product form, under "Cores e estoque", each colour has its own name, a quantity per size and its own photos: up to **6 colours**, **12 photos per colour**, **24 per product** and **12 new ones per save**, each up to 15 MB. The first photo of a colour is its cover, and the first colour's is the piece's; "↑ Antes", "↓ Depois", "Usar como capa" and "Tirar" arrange them. A quantity left empty means that size is not counted; a colour with no quantity at all is not counted, and the site shows its sizes without numbers. "Adicionar outra cor" adds a block; without JavaScript, the form offers one blank block to fill instead.
+
+The list shows each counted colour's quantities with **"−" and "+"** per size, for a sale or a restock: like "Marcar como esgotada", each sends the quantity wanted, so a double tap changes it by one, and each saves at once but only lights the publish badge; the site changes on the next publish.
 
 - **Nothing is saved until "Salvar alterações"** (or "Cadastrar peça"), decided with the owners' needs in mind: they arrange the photos and confirm once. Until then `static/photos.js` keeps the chosen files in the browser and shows them as previews; a notice says there are unsaved changes, and leaving the page asks first. Photos taken out wait under "Serão apagadas ao salvar", with "Desfazer".
-- **All or nothing.** Saving sends the fields and the photos together. The service checks every field and processes every new photo before storing anything, so one refusal lists every problem; then it saves the product and its photo list in one transaction. A refusal changes nothing, and the page keeps the photos as they were arranged: `photos.js` only swaps in the messages.
-- **A stale screen is refused.** If the photos changed elsewhere (another device) since the page was loaded, saving fails with a message instead of deleting a photo the person never saw.
+- **All or nothing.** Saving sends the fields and the photos together. The service checks every field and processes every new photo before storing anything, so one refusal lists every problem; then it saves the product and its photo list in one transaction. A refusal changes nothing, and the page keeps the photos as they were arranged: `photos.js` only swaps in the messages and the typed fields, colour block by colour block.
+- **A stale screen is refused.** If the colours or photos changed elsewhere (another device) since the page was loaded, saving fails with a message instead of deleting a photo the person never saw.
 
 - **What comes in:** JPEG, PNG or WebP, recognised by their first bytes, not by name or declared type. Anything else is refused with a message naming the file. The phone's file picker offers JPEG for HEIC photos, because the form accepts only these types.
 - **What goes out:** two JPEGs, **1200 and 600 px wide** (never enlarged), keyed `produtos/<image id>-<width>.jpg`. Re-encoding drops all metadata, **GPS included**; first it applies the EXIF orientation, so phone photos come out upright, and keeps the colour profile, so Display P3 photos keep their colours.

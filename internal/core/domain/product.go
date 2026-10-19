@@ -59,6 +59,23 @@ func (p Product) Images() []Image {
 	return images
 }
 
+// TracksStock reports whether any of the product's colours counts its
+// stock.
+func (p Product) TracksStock() bool {
+	return slices.ContainsFunc(p.Colours, Colour.TracksStock)
+}
+
+// StockTotal adds up the pieces counted in every colour and size.
+func (p Product) StockTotal() int32 {
+	var total int32
+	for _, c := range p.Colours {
+		for _, s := range c.Stock {
+			total += s.Quantity
+		}
+	}
+	return total
+}
+
 // Cover is the photo shown on the catalogue card: the first one of the
 // first colour that has any.
 func (p Product) Cover() (Image, bool) {

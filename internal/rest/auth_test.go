@@ -114,6 +114,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("GET /admin/products/{id}", private(product.Edit))
 	app.Handle("POST /admin/products/{id}", private(product.Update))
 	app.Handle("POST /admin/products/{id}/sold-out", private(product.SetSoldOut))
+	app.Handle("POST /admin/products/{id}/colours/{colourID}/stock/{size}", private(product.SetStock))
 	app.Handle("GET /admin/products/{id}/archive", private(product.ConfirmArchive))
 	app.Handle("POST /admin/products/{id}/archive", private(product.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(product.Unarchive))

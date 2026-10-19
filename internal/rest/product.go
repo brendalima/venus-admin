@@ -64,12 +64,14 @@ type productFormPage struct {
 	Alert    string            // a problem that belongs to no field
 	Sizes    []string          // every size on offer
 
-	// Photos are the ones stored; changes made on screen live in the
-	// browser (static/photos.js) until the form is saved.
-	Photos      []domain.Image
-	PhotoErrors []string // one per file that could not be used, naming it
-	MaxPhotos   int
-	MaxPhotoMB  int
+	// Colours are the blocks of the colour section, each with its photos.
+	// ColourErrors are about the colours as a whole, such as their number.
+	Colours      []colourBlock
+	ColourErrors []string
+
+	// current is the product being edited, as stored, when the handler
+	// has it already; renderForm loads it otherwise.
+	current *domain.Product
 }
 
 // productConfirmPage asks before archiving or deleting a product.
@@ -228,12 +230,16 @@ func (h *Product) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	page := productFormPage{Form: sub.form}
 	p, priceErr := sub.form.product()
-	if priceErr != nil {
-		h.priceUnreadable(w, r, page, p)
+	if priceErr != nil || sub.unreadable() {
+		h.unreadable(w, r, page, sub, p, priceErr)
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), p, newProductColours(sub.photos))
+	var colours domain.ColoursEdit
+	if sub.colours != nil {
+		colours = sub.colours.edit
+	}
+	created, err := h.service.Create(r.Context(), p, colours)
 	if err != nil {
 		h.saveFailed(w, r, page, sub, err)
 		return
@@ -248,7 +254,7 @@ func (h *Product) Edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderForm(w, r, http.StatusOK, productFormPage{
-		ID: p.ID, Archived: p.Archived(), Form: productFormFrom(p), Photos: formPhotos(p),
+		ID: p.ID, Form: productFormFrom(p), Colours: colourBlocksFrom(p), current: &p,
 	})
 }
 
@@ -261,21 +267,15 @@ func (h *Product) Update(w http.ResponseWriter, r *http.Request) {
 	page := productFormPage{ID: id, Form: sub.form}
 	p, priceErr := sub.form.product()
 	p.ID = id
-	if priceErr != nil {
-		h.priceUnreadable(w, r, page, p)
+	if priceErr != nil || sub.unreadable() {
+		h.unreadable(w, r, page, sub, p, priceErr)
 		return
 	}
 
 	var colours *domain.ColoursEdit
-	if sub.photos != nil {
-		current, err := h.service.GetByID(r.Context(), id)
-		if err != nil {
-			h.saveFailed(w, r, page, sub, err)
-			return
-		}
-		colours = editedColours(current, *sub.photos)
+	if sub.colours != nil {
+		colours = &sub.colours.edit
 	}
-
 	updated, err := h.service.Update(r.Context(), p, colours)
 	if err != nil {
 		h.saveFailed(w, r, page, sub, err)
@@ -317,6 +317,50 @@ func (h *Product) SetSoldOut(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "couldn't set sold out", "error", err)
+		h.flash(r, sessionFlashErrorKey, "Não consegui salvar agora. Tente de novo em instantes.")
+		seeOther(w, r, "/admin")
+		return
+	}
+
+	if isHTMX(r) {
+		h.templates.renderFragment(w, r, http.StatusOK, "products.html", "product-row", p)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+// SetStock is the list's quick "−1" on one size of one colour. Like
+// SetSoldOut, the form carries the quantity wanted, not "one less": a
+// double tap then asks for the same thing twice instead of taking two.
+func (h *Product) SetStock(w http.ResponseWriter, r *http.Request) {
+	if !h.parseForm(w, r) {
+		return
+	}
+	ctx := r.Context()
+
+	quantity, err := strconv.ParseInt(r.PostForm.Get("quantity"), 10, 32)
+	if err != nil {
+		h.renderMessage(w, r, http.StatusBadRequest,
+			"Não consegui ler o pedido", "Volte para a lista e tente de novo.")
+		return
+	}
+
+	p, err := h.service.SetStock(ctx, r.PathValue("id"), r.PathValue("colourID"), r.PathValue("size"), int32(quantity))
+	var notFound *domain.NotFoundError
+	if errors.As(err, &notFound) {
+		h.flash(r, sessionFlashErrorKey, "Essa peça ou essa cor não existe mais. Talvez alguém a tenha apagado.")
+		seeOther(w, r, "/admin")
+		return
+	}
+	var invalid *domain.ValidationError
+	if errors.As(err, &invalid) {
+		// The list was older than the piece, whose sizes changed since.
+		h.flash(r, sessionFlashErrorKey, invalid.Message+". Nada foi salvo; confira as quantidades abaixo.")
+		seeOther(w, r, "/admin")
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "couldn't set stock", "error", err)
 		h.flash(r, sessionFlashErrorKey, "Não consegui salvar agora. Tente de novo em instantes.")
 		seeOther(w, r, "/admin")
 		return
@@ -449,8 +493,6 @@ func (h *Product) parseForm(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // saveFailed answers a create or update the service refused, showing the
-// form again as it was sent.
-// saveFailed answers a create or update the service refused, showing the
 // form again as it was sent. New photos cannot be put back into a file
 // field, so without JavaScript they have to be chosen again; with it, the
 // browser still holds them and only the messages are swapped in.
@@ -465,8 +507,9 @@ func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page produc
 	}
 	var stale *domain.StaleError
 	if errors.As(err, &stale) {
-		page.Alert = "As fotos desta peça mudaram enquanto você editava, talvez em outro aparelho. " +
-			"Nada foi salvo: recarregue a página para ver as fotos como estão agora e refaça as mudanças."
+		page.Alert = "As cores ou as fotos desta peça mudaram enquanto você editava, talvez em outro aparelho. " +
+			"Nada foi salvo: recarregue a página para vê-las como estão agora e refaça as mudanças."
+		page.Colours = sub.blocks()
 		h.renderForm(w, r, http.StatusConflict, page)
 		return
 	}
@@ -475,25 +518,42 @@ func (h *Product) saveFailed(w http.ResponseWriter, r *http.Request, page produc
 	if len(errs) == 0 {
 		slog.ErrorContext(ctx, "couldn't save product", "error", err)
 		page.Alert = "Não consegui salvar agora. Nada foi salvo: tente de novo em instantes."
+		page.Colours = sub.blocks()
 		h.renderForm(w, r, http.StatusInternalServerError, page)
 		return
 	}
-	page.PhotoErrors = takePhotoErrors(errs, sub.fileNames)
-	h.renderInvalid(w, r, page, errs)
+	h.renderInvalid(w, r, page, sub, errs)
 }
 
-// priceUnreadable answers a form whose price could not be read, without
-// calling the service. The domain still checks the other fields, so they
-// are all marked at once. The slug is left out: the service derives it,
-// and has not run.
-func (h *Product) priceUnreadable(w http.ResponseWriter, r *http.Request, page productFormPage, p domain.Product) {
-	errs := fieldErrors(p.Normalized().Validate())
+// unreadable answers a form whose price or quantities could not be read,
+// without calling the service: whatever was typed must not be saved as
+// "no price" or "not counted". The domain still checks everything else,
+// so it is all marked at once. The slug is left out: the service derives
+// it, and has not run.
+func (h *Product) unreadable(w http.ResponseWriter, r *http.Request, page productFormPage, sub productSubmission, p domain.Product, priceErr error) {
+	p = p.Normalized()
+	err := p.Validate()
+	if sub.colours != nil {
+		err = errors.Join(err, sub.colours.edit.Normalized(p.Sizes).Validate())
+	}
+	errs := fieldErrors(err)
 	delete(errs, "slug")
-	errs["price"] = "Escreva o preço só com números, como 189,90, ou deixe vazio"
-	h.renderInvalid(w, r, page, errs)
+	if priceErr != nil {
+		errs["price"] = "Escreva o preço só com números, como 189,90, ou deixe vazio"
+	}
+	if sub.colours != nil {
+		for field, msg := range sub.colours.unreadable {
+			errs[field] = msg
+		}
+	}
+	h.renderInvalid(w, r, page, sub, errs)
 }
 
-func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page productFormPage, errs map[string]string) {
+func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page productFormPage, sub productSubmission, errs map[string]string) {
+	if sub.colours != nil {
+		page.ColourErrors = sub.colours.placeErrors(errs)
+		page.Colours = sub.colours.blocks
+	}
 	page.Errors = errs
 	// A new product's address comes from its name, and the form has no
 	// address field to show the error next to.
@@ -510,9 +570,7 @@ func (h *Product) renderInvalid(w http.ResponseWriter, r *http.Request, page pro
 func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int, page productFormPage) {
 	page.adminLayout = h.layout(r)
 	page.Sizes = domain.AllSizes()
-	page.MaxPhotos = domain.MaxImagesPerColour
-	page.MaxPhotoMB = maxPhotoBytes >> 20
-	if page.ID != "" && page.Photos == nil {
+	if page.ID != "" && page.current == nil {
 		// A rejected edit shows the form again; the photos come from the
 		// database, not from what was posted. Without them the section
 		// would look empty, so a failure here is only logged.
@@ -520,8 +578,20 @@ func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int,
 		if err != nil {
 			slog.WarnContext(r.Context(), "couldn't load photos for the form", "error", err)
 		}
-		page.Photos = formPhotos(p)
-		page.Archived = p.Archived()
+		page.current = &p
+	}
+	if page.current != nil {
+		page.Archived = page.current.Archived()
+		if page.Colours == nil {
+			page.Colours = colourBlocksFrom(*page.current)
+		} else {
+			page.Colours = withStoredPhotos(page.Colours, *page.current)
+		}
+	}
+	if len(page.Colours) == 0 {
+		// Every piece needs a colour: one is ready to fill, so the rule
+		// never shows on the way to saving a first piece.
+		page.Colours = []colourBlock{{Key: "0", Stock: map[string]string{}}}
 	}
 	h.templates.render(w, r, status, "product_form.html", page)
 }
@@ -586,4 +656,18 @@ func seeOther(w http.ResponseWriter, r *http.Request, url string) {
 		return
 	}
 	http.Redirect(w, r, url, http.StatusSeeOther)
+}
+
+// unreadable reports whether a quantity could not be read.
+func (s productSubmission) unreadable() bool {
+	return s.colours != nil && len(s.colours.unreadable) > 0
+}
+
+// blocks are the colour blocks as posted, or nil without a colour
+// section, to show the form again.
+func (s productSubmission) blocks() []colourBlock {
+	if s.colours == nil {
+		return nil
+	}
+	return s.colours.blocks
 }
