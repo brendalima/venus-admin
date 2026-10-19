@@ -26,7 +26,7 @@ adapters/                config from the environment, database connection,
                          embedded goose migrations (adapters/migrations/)
 internal/
   core/
-    domain/              entities (Product, Image, User), Slugify,
+    domain/              entities (Product, Colour, Image, User), Slugify,
                          validation, domain errors — stdlib only
     services/            business rules + contracts.go (what handlers use)
   repository/            SQL over database/sql + contracts.go
@@ -171,7 +171,19 @@ curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
 #     "slug": "biquini-aurora",
 #     "name": "Biquíni Aurora",
 #     "price_cents": 18990,
-#     "sizes": ["P", "M"],
+#     "sizes": ["P", "M", "G"],
+#     "colours": [
+#       {
+#         "id": "3c9d…",
+#         "name": "Bege",
+#         "images": [
+#           {"url_600": "https://…/produtos/<image id>-600.jpg", "url_1200": "https://…/produtos/<image id>-1200.jpg"}
+#         ],
+#         "tracks_stock": true,
+#         "stock": [{"size": "P", "quantity": 1}, {"size": "M", "quantity": 2}, {"size": "G", "quantity": 0}]
+#       },
+#       {"id": "7e41…", "name": "Vinho", "images": [], "tracks_stock": false, "stock": []}
+#     ],
 #     "images": [
 #       {"url_600": "https://…/produtos/<image id>-600.jpg", "url_1200": "https://…/produtos/<image id>-1200.jpg"}
 #     ],
@@ -186,7 +198,9 @@ curl -s localhost:8080/api/products
 ```
 
 - A product without a price has **no `price_cents`**, so the site cannot show it as R$ 0,00. An empty `description` or `details` is left out too.
-- `images` is always present, possibly empty, cover first.
+- `colours` is always present, in the order the form shows them; each colour's `images` are its photos, cover first. Every product has at least one colour.
+- `tracks_stock` says whether the colour's quantities are counted. When they are, `stock` has **every size of `sizes`**, in that order, and a size the owners did not count comes as `0`, which the site shows as unavailable. `quantity` is never left out, zero included. When they are not, `stock` is `[]` and the site shows the sizes without numbers. `sold_out` wins over any quantity.
+- `images` is always present, possibly empty: every colour's photos in colour order, the first colour's cover first. It is kept for a site that does not read `colours` yet, and goes away once the site has moved (phase 5 of the variations plan).
 - `Cache-Control: no-store`. In development without `API_TOKEN`, the route is off.
 
 ## Access

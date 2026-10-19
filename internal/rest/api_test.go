@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -67,10 +68,13 @@ func TestAPIProducts(t *testing.T) {
 	withPhotos := aurora()
 	withPhotos.Description = "Verde-água"
 	withPhotos.Details = []string{"Forro duplo"}
-	// Two colours: the site still gets one list, every colour's photos in
-	// order, until it learns about colours.
+	withPhotos.Sizes = []string{"P", "M", "G"}
+	// Two colours, one counting stock with M missing and G stored at zero,
+	// one not counting. The flat images list keeps every colour's photos
+	// in order, for a site that does not read colours yet.
 	withPhotos.Colours = []domain.Colour{
-		{ID: "c1", Name: "Bege", Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}}},
+		{ID: "c1", Name: "Bege", Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}},
+			Stock: []domain.Stock{{Size: "P", Quantity: 1}, {Size: "G", Quantity: 0}}},
 		{ID: "c2", Name: "Vinho", Images: []domain.Image{{ID: "i2", Key600: "produtos/i2-600.jpg", Key1200: "produtos/i2-1200.jpg"}}},
 	}
 	// Details empty but not nil, as the repository returns them.
@@ -113,6 +117,23 @@ func TestAPIProducts(t *testing.T) {
 		t.Errorf("cover = %v", cover)
 	}
 
+	// Every size of the grid for the colour that counts, zeros included:
+	// a zero left out would read as not counted rather than unavailable.
+	var wantColours any
+	if err := json.Unmarshal([]byte(`[
+		{"id": "c1", "name": "Bege", "tracks_stock": true,
+		 "images": [{"url_600": "`+testImageBaseURL+`/produtos/i1-600.jpg", "url_1200": "`+testImageBaseURL+`/produtos/i1-1200.jpg"}],
+		 "stock": [{"size": "P", "quantity": 1}, {"size": "M", "quantity": 0}, {"size": "G", "quantity": 0}]},
+		{"id": "c2", "name": "Vinho", "tracks_stock": false,
+		 "images": [{"url_600": "`+testImageBaseURL+`/produtos/i2-600.jpg", "url_1200": "`+testImageBaseURL+`/produtos/i2-1200.jpg"}],
+		 "stock": []}
+	]`), &wantColours); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a["colours"], wantColours) {
+		t.Errorf("aurora colours = %v\nwant %v", a["colours"], wantColours)
+	}
+
 	// No price must not reach the site as R$ 0,00: the field is absent.
 	if _, has := o["price_cents"]; has {
 		t.Errorf("a product without a price has price_cents: %v", o)
@@ -121,6 +142,9 @@ func TestAPIProducts(t *testing.T) {
 		if _, has := o[field]; has {
 			t.Errorf("empty %s is sent: %v", field, o)
 		}
+	}
+	if colours, ok := o["colours"].([]any); !ok || len(colours) != 0 {
+		t.Errorf("orion colours = %v", o["colours"])
 	}
 	if imgs, ok := o["images"].([]any); !ok || len(imgs) != 0 || o["sold_out"] != true {
 		t.Errorf("orion = %v", o)
