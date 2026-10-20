@@ -184,9 +184,6 @@ curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
 #       },
 #       {"id": "7e41…", "name": "Vinho", "images": [], "tracks_stock": false, "stock": []}
 #     ],
-#     "images": [
-#       {"url_600": "https://…/produtos/<image id>-600.jpg", "url_1200": "https://…/produtos/<image id>-1200.jpg"}
-#     ],
 #     "description": "Triângulo verde",
 #     "details": ["Forro duplo"],
 #     "sold_out": false
@@ -200,7 +197,7 @@ curl -s localhost:8080/api/products
 - A product without a price has **no `price_cents`**, so the site cannot show it as R$ 0,00. An empty `description` or `details` is left out too.
 - `colours` is always present, in the order the form shows them; each colour's `images` are its photos, cover first. Every product has at least one colour.
 - `tracks_stock` says whether the colour's quantities are counted. When they are, `stock` has **every size of `sizes`**, in that order, and a size the owners did not count comes as `0`, which the site shows as unavailable. `quantity` is never left out, zero included. When they are not, `stock` is `[]` and the site shows the sizes without numbers. `sold_out` wins over any quantity.
-- `images` is always present, possibly empty: every colour's photos in colour order, the first colour's cover first. It is kept for a site that does not read `colours` yet, and goes away once the site has moved (phase 5 of the variations plan).
+- **There is no `images` at the product level.** Photos belong to a colour. A flat list was sent alongside `colours` while the site was still being migrated, and was dropped once it had been (phase 5 of the variations plan); a site reading it would be reading the older response.
 - `Cache-Control: no-store`. In development without `API_TOKEN`, the route is off.
 
 ## Access

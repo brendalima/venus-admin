@@ -70,8 +70,8 @@ func TestAPIProducts(t *testing.T) {
 	withPhotos.Details = []string{"Forro duplo"}
 	withPhotos.Sizes = []string{"P", "M", "G"}
 	// Two colours, one counting stock with M missing and G stored at zero,
-	// one not counting. The flat images list keeps every colour's photos
-	// in order, for a site that does not read colours yet.
+	// one not counting. Each colour carries its own photos; there is no
+	// flat list at the product level any more.
 	withPhotos.Colours = []domain.Colour{
 		{ID: "c1", Name: "Bege", Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}},
 			Stock: []domain.Stock{{Size: "P", Quantity: 1}, {Size: "G", Quantity: 0}}},
@@ -108,14 +108,6 @@ func TestAPIProducts(t *testing.T) {
 	if a["price_cents"] != float64(18990) || a["slug"] != "biquini-aurora" || a["sold_out"] != false {
 		t.Errorf("aurora = %v", a)
 	}
-	images, _ := a["images"].([]any)
-	if len(images) != 2 {
-		t.Fatalf("aurora images = %v", a["images"])
-	}
-	cover, _ := images[0].(map[string]any)
-	if cover["url_600"] != testImageBaseURL+"/produtos/i1-600.jpg" || cover["url_1200"] != testImageBaseURL+"/produtos/i1-1200.jpg" {
-		t.Errorf("cover = %v", cover)
-	}
 
 	// Every size of the grid for the colour that counts, zeros included:
 	// a zero left out would read as not counted rather than unavailable.
@@ -146,8 +138,16 @@ func TestAPIProducts(t *testing.T) {
 	if colours, ok := o["colours"].([]any); !ok || len(colours) != 0 {
 		t.Errorf("orion colours = %v", o["colours"])
 	}
-	if imgs, ok := o["images"].([]any); !ok || len(imgs) != 0 || o["sold_out"] != true {
+	if o["sold_out"] != true {
 		t.Errorf("orion = %v", o)
+	}
+	// The flat images list is gone: the site reads each colour's photos.
+	// Sending it again would put two sources of truth back in the
+	// response, and the site would ignore one of them.
+	for _, p := range got {
+		if _, has := p["images"]; has {
+			t.Errorf("%s still has a flat images list: %v", p["slug"], p["images"])
+		}
 	}
 
 	app.products.listErr = errors.New("database timeout")
