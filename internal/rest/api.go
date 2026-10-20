@@ -15,20 +15,19 @@ import (
 
 // productResponse is a product as the site's build reads it: only what
 // the site shows. A product without a price has no price_cents, so the
-// site can never show it as R$ 0,00.
+// site can never show it as R$ 0,00. Photos hang off the colours, never
+// off the product: the flat images list that sat here while the site
+// was migrating was dropped once it read colours.
 type productResponse struct {
-	ID         string           `json:"id"`
-	Slug       string           `json:"slug"`
-	Name       string           `json:"name"`
-	PriceCents int64            `json:"price_cents,omitzero"`
-	Sizes      []string         `json:"sizes"`
-	Colours    []colourResponse `json:"colours"`
-	// Images flattens every colour's photos, in colour order, for a site
-	// that does not read colours yet.
-	Images      []imageResponse `json:"images"`
-	Description string          `json:"description,omitempty"`
-	Details     []string        `json:"details,omitempty"`
-	SoldOut     bool            `json:"sold_out"`
+	ID          string           `json:"id"`
+	Slug        string           `json:"slug"`
+	Name        string           `json:"name"`
+	PriceCents  int64            `json:"price_cents,omitzero"`
+	Sizes       []string         `json:"sizes"`
+	Colours     []colourResponse `json:"colours"`
+	Description string           `json:"description,omitempty"`
+	Details     []string         `json:"details,omitempty"`
+	SoldOut     bool             `json:"sold_out"`
 }
 
 // colourResponse is one colour with its photos, cover first, and its
@@ -133,7 +132,6 @@ func (a *API) toProductResponse(p domain.Product) productResponse {
 		Name:        p.Name,
 		Sizes:       p.Sizes,
 		Colours:     make([]colourResponse, 0, len(p.Colours)),
-		Images:      a.toImageResponses(p.Images()),
 		Description: p.Description,
 		Details:     p.Details,
 		SoldOut:     p.SoldOut,
