@@ -115,7 +115,7 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `POST /admin/products/{id}/colours/{colourID}/stock/{size}` | The list's "−" and "+": sets that size's quantity (form: `quantity=<n>`, the quantity wanted, not a change); answers the list row to HTMX |
 | `GET /admin/products/{id}/archive` | Asks for confirmation before taking the product out of the collection |
 | `POST /admin/products/{id}/archive` | Archives it: off the site on the next publish, kept with its photos |
-| `POST /admin/products/{id}/unarchive` | Puts it back in the collection, in its old place; answers a row saying so to HTMX |
+| `POST /admin/products/{id}/unarchive` | Puts it back on the site, in its old place; answers a row saying so to HTMX |
 | `GET /admin/arquivadas` | The archived products, most recent first |
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product; linked from the archived list only |
 | `POST /admin/products/{id}/delete` | Deletes it for good, and its photo files |
@@ -132,7 +132,7 @@ Product form fields (`multipart/form-data`, since photos go with them): `name`, 
 - **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
 - **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
 - **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
-- **Archiving, not deleting, is how a piece leaves the site.** The edit screen offers "Tirar da coleção", which keeps the product, its photos and its files, and suggests marking it sold out instead if it only ran out. Deleting for good is offered only from the archived list, through a confirmation page that says the photo files go too.
+- **Archiving, not deleting, is how a piece leaves the site.** The edit screen offers "Tirar do site", which keeps the product, its photos and its files, and suggests marking it sold out instead if it only ran out. Deleting for good is offered only from the archived list, through a confirmation page that says the photo files go too.
 
 ### Photos
 
@@ -166,7 +166,7 @@ Without `DEPLOY_HOOK_URL` there is nothing to rebuild. Development then only log
 
 ### The site's API
 
-`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product in the collection (archived ones are left out) in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
+`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product on the site (archived ones are left out) in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
 
 ```bash
 curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products

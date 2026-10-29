@@ -122,7 +122,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("POST /admin/products/{id}/archive", private(product.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(product.Unarchive))
 	app.Handle("GET /admin/arquivadas", private(product.ListArchived))
-	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// Reached from /admin/arquivadas only: a piece leaves the site
 	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))

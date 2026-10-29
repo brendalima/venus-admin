@@ -135,7 +135,7 @@ func run() error {
 	app.Handle("POST /admin/products/{id}/archive", private(rProduct.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(rProduct.Unarchive))
 	app.Handle("GET /admin/arquivadas", private(rProduct.ListArchived))
-	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// Reached from /admin/arquivadas only: a piece leaves the site
 	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))

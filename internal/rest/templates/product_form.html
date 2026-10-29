@@ -127,13 +127,13 @@
   <p><strong>Esta peça está arquivada.</strong> Ela não aparece no site, mas continua guardada com as fotos.</p>
   <form method="post" action="/admin/products/{{.ID}}/unarchive">
     <div class="actions">
-      <button type="submit" class="secondary">Voltar para a coleção</button>
+      <button type="submit" class="secondary">Voltar para o site</button>
       <a href="/admin/arquivadas">Ver as peças arquivadas</a>
     </div>
   </form>
 </div>
 {{else if .ID}}
-<p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar da coleção</a></p>
+<p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar do site</a></p>
 {{end}}
 {{end}}
 

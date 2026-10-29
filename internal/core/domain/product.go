@@ -40,9 +40,9 @@ type Product struct {
 	// each with its photos and stock.
 	Colours []Colour
 
-	// ArchivedAt is when the piece left the collection: it no longer
+	// ArchivedAt is when the piece left the site: it no longer
 	// shows on the site, but keeps its photos and can come back. Zero
-	// means it is in the collection.
+	// means it is on the site.
 	ArchivedAt time.Time
 
 	CreatedAt time.Time

@@ -424,11 +424,11 @@ func (h *Product) Archive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.flash(r, sessionFlashKey, "“"+p.Name+"” saiu da coleção. Ela continua guardada em “Peças arquivadas”.")
+	h.flash(r, sessionFlashKey, "“"+p.Name+"” saiu do site. Ela continua guardada em “Peças arquivadas”.")
 	seeOther(w, r, "/admin")
 }
 
-// Unarchive puts a product back in the collection. Through HTMX, from the
+// Unarchive puts a product back on the site. Through HTMX, from the
 // archived list, it answers with a row saying so in place of the
 // product's; otherwise it goes to the main list, where the piece now is.
 func (h *Product) Unarchive(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +440,7 @@ func (h *Product) Unarchive(w http.ResponseWriter, r *http.Request) {
 		h.templates.renderFragment(w, r, http.StatusOK, "products_archived.html", "restored-row", p)
 		return
 	}
-	h.flash(r, sessionFlashKey, "“"+p.Name+"” voltou para a coleção.")
+	h.flash(r, sessionFlashKey, "“"+p.Name+"” voltou para o site.")
 	seeOther(w, r, "/admin")
 }
 
