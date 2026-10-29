@@ -27,9 +27,14 @@ type Product struct {
 
 	Sizes       []string
 	Description string
-	Details     []string
-	SoldOut     bool
-	Position    int32
+	// CollectionID is the collection the piece belongs to, empty when it
+	// belongs to none. CollectionName comes with it on reads, for showing;
+	// writes ignore it.
+	CollectionID   string
+	CollectionName string
+	Details        []string
+	SoldOut        bool
+	Position       int32
 
 	// Colours are the colours the piece comes in, in display order,
 	// each with its photos and stock.
@@ -120,6 +125,7 @@ func AllSizes() []string {
 func (p Product) Normalized() Product {
 	p.Name = strings.TrimSpace(p.Name)
 	p.Description = strings.TrimSpace(p.Description)
+	p.CollectionID = strings.TrimSpace(p.CollectionID)
 
 	var sizes []string
 	for _, s := range AllSizes() {

@@ -1,0 +1,36 @@
+{{define "title"}}Coleções{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+{{template "flash" .}}
+<h1>Coleções</h1>
+
+<form class="card" method="post" action="/admin/collections" novalidate>
+  <label for="name" class="first">Nova coleção</label>
+  <div class="new-collection">
+    <input id="name" name="name" type="text" value="{{.Name}}" placeholder="Verão 2026" autocomplete="off" required
+           aria-describedby="{{if .Error}}name-error {{end}}name-hint" {{if .Error}}aria-invalid="true" autofocus{{end}}>
+    <button type="submit">Cadastrar</button>
+  </div>
+  {{with .Error}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+  <p class="hint" id="name-hint">Depois, escolha a coleção no formulário de cada peça.</p>
+</form>
+
+{{if .Collections}}
+<ul class="products collections">
+  {{range .Collections}}
+  <li class="product">
+    <a href="/admin/collections/{{.ID}}">
+      <span>
+        <strong>{{.Name}}</strong>
+        <span class="meta">{{if eq .Pieces 0}}Nenhuma peça ainda{{else if eq .Pieces 1}}1 peça{{else}}{{.Pieces}} peças{{end}}</span>
+      </span>
+    </a>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="muted collections">Nenhuma coleção cadastrada ainda. Enquanto isso, as peças ficam “sem coleção”.</p>
+{{end}}
+{{end}}

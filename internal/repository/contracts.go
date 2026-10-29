@@ -57,6 +57,20 @@ type ProductRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// CollectionRepository persists collections. Lists and reads fill in
+// how many pieces each one has.
+type CollectionRepository interface {
+	// List returns every collection, the newest first.
+	List(ctx context.Context) ([]domain.Collection, error)
+	GetByID(ctx context.Context, id string) (domain.Collection, error)
+	// Create and Rename return a name already in use, in any case, as
+	// *domain.ConflictError.
+	Create(ctx context.Context, c domain.Collection) (domain.Collection, error)
+	Rename(ctx context.Context, id, name string) (domain.Collection, error)
+	// Delete leaves the collection's pieces without one.
+	Delete(ctx context.Context, id string) error
+}
+
 // SiteRepository records what the public site was last built from. The
 // product repository implements it: the state lives next to the products
 // and their triggers keep it current.

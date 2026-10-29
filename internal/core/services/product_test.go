@@ -202,11 +202,12 @@ func keepColours(p domain.Product) *domain.ColoursEdit {
 }
 
 func TestNewProduct(t *testing.T) {
-	full := ProductInput{Repo: newMockProductRepository(), Store: newMockImageStore(), Processor: &mockProcessor{}}
+	full := ProductInput{Repo: newMockProductRepository(), Collections: newMockCollectionRepository(), Store: newMockImageStore(), Processor: &mockProcessor{}}
 	for name, in := range map[string]ProductInput{
-		"repository": {Store: full.Store, Processor: full.Processor},
-		"store":      {Repo: full.Repo, Processor: full.Processor},
-		"processor":  {Repo: full.Repo, Store: full.Store},
+		"repository":  {Collections: full.Collections, Store: full.Store, Processor: full.Processor},
+		"collections": {Repo: full.Repo, Store: full.Store, Processor: full.Processor},
+		"store":       {Repo: full.Repo, Collections: full.Collections, Processor: full.Processor},
+		"processor":   {Repo: full.Repo, Collections: full.Collections, Store: full.Store},
 	} {
 		if _, err := NewProduct(in); err == nil {
 			t.Errorf("missing %s was accepted", name)
@@ -236,6 +237,53 @@ func TestProductCreate(t *testing.T) {
 	}
 	if !slices.Equal(p.Sizes, []string{"P", "G"}) || !slices.Equal(p.Details, []string{"Verde"}) {
 		t.Errorf("sizes %v, details %v, want them normalised", p.Sizes, p.Details)
+	}
+}
+
+func TestProductCollection(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockProductRepository()
+	collections := newMockCollectionRepository(domain.Collection{ID: "verao", Name: "Verão 2026"})
+	s := MustNewProduct(ProductInput{Repo: repo, Collections: collections, Store: newMockImageStore(), Processor: &mockProcessor{}})
+
+	in := validInput()
+	in.CollectionID = " verao "
+	p, err := s.Create(ctx, in, oneColour())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.CollectionID != "verao" {
+		t.Errorf("collection %q, want verao", p.CollectionID)
+	}
+
+	// Deleted while the form was open: a message on the field, and
+	// nothing saved, together with the other fields' problems.
+	writes := repo.writes
+	in.CollectionID = "gone"
+	in.Name = ""
+	_, err = s.Create(ctx, in, oneColour())
+	if got := fieldsOf(err); !slices.Contains(got, "collection") || !slices.Contains(got, "name") {
+		t.Errorf("fields %v, want collection and name", got)
+	}
+	p.CollectionID = "gone"
+	if _, err := s.Update(ctx, p, nil); !slices.Contains(fieldsOf(err), "collection") {
+		t.Errorf("update: err = %v, want a validation error on collection", err)
+	}
+	if repo.writes != writes {
+		t.Error("a piece was saved with a collection that does not exist")
+	}
+
+	// Out of a collection: nothing to check.
+	p.CollectionID = ""
+	collections.err = errors.New("database down")
+	if _, err := s.Update(ctx, p, nil); err != nil {
+		t.Errorf("update without a collection: %v", err)
+	}
+	// A failure to check is not the person's mistake.
+	p.CollectionID = "verao"
+	var invalid *domain.ValidationError
+	if _, err := s.Update(ctx, p, nil); err == nil || errors.As(err, &invalid) {
+		t.Errorf("update while the check fails: err = %v, want a plain error", err)
 	}
 }
 

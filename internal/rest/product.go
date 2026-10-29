@@ -34,6 +34,27 @@ type adminLayout struct {
 	Email      string
 	Flash      string
 	FlashError string
+	// Section is the part of the admin the page is in, which the top
+	// navigation marks: sectionProducts or sectionCollections.
+	Section string
+}
+
+const (
+	sectionProducts    = "products"
+	sectionCollections = "collections"
+)
+
+// newAdminLayout takes the flash messages out of the session: shown
+// once, then gone.
+func newAdminLayout(r *http.Request, sessions *scs.SessionManager, section string) adminLayout {
+	ctx := r.Context()
+	user, _ := currentUser(ctx)
+	return adminLayout{
+		Email:      user.Email,
+		Flash:      sessions.PopString(ctx, sessionFlashKey),
+		FlashError: sessions.PopString(ctx, sessionFlashErrorKey),
+		Section:    section,
+	}
 }
 
 type productListPage struct {
@@ -64,6 +85,10 @@ type productFormPage struct {
 	Alert    string            // a problem that belongs to no field
 	Sizes    []string          // every size on offer
 
+	// Collections are the ones a piece can be put in.
+	Collections        []domain.Collection
+	CollectionsUnknown bool
+
 	// Colours are the blocks of the colour section, each with its photos.
 	// ColourErrors are about the colours as a whole, such as their number.
 	Colours      []colourBlock
@@ -89,26 +114,28 @@ type messagePage struct {
 // productForm is the form as typed, kept as text so a rejected form comes
 // back exactly as the person left it.
 type productForm struct {
-	Name        string
-	Price       string
-	Sizes       []string
-	Description string
-	Details     string // one per line
-	Slug        string
-	SoldOut     bool
+	Name         string
+	Price        string
+	Sizes        []string
+	Description  string
+	CollectionID string
+	Details      string // one per line
+	Slug         string
+	SoldOut      bool
 }
 
 func (f productForm) HasSize(size string) bool { return slices.Contains(f.Sizes, size) }
 
 func readProductForm(r *http.Request) productForm {
 	return productForm{
-		Name:        r.PostForm.Get("name"),
-		Price:       r.PostForm.Get("price"),
-		Sizes:       r.PostForm["sizes"],
-		Description: r.PostForm.Get("description"),
-		Details:     r.PostForm.Get("details"),
-		Slug:        r.PostForm.Get("slug"),
-		SoldOut:     r.PostForm.Get("sold_out") != "",
+		Name:         r.PostForm.Get("name"),
+		Price:        r.PostForm.Get("price"),
+		Sizes:        r.PostForm["sizes"],
+		Description:  r.PostForm.Get("description"),
+		CollectionID: r.PostForm.Get("collection_id"),
+		Details:      r.PostForm.Get("details"),
+		Slug:         r.PostForm.Get("slug"),
+		SoldOut:      r.PostForm.Get("sold_out") != "",
 	}
 }
 
@@ -118,13 +145,14 @@ func productFormFrom(p domain.Product) productForm {
 		price = formatReais(p.PriceCents)
 	}
 	return productForm{
-		Name:        p.Name,
-		Price:       price,
-		Sizes:       p.Sizes,
-		Description: p.Description,
-		Details:     strings.Join(p.Details, "\n"),
-		Slug:        p.Slug,
-		SoldOut:     p.SoldOut,
+		Name:         p.Name,
+		Price:        price,
+		Sizes:        p.Sizes,
+		Description:  p.Description,
+		CollectionID: p.CollectionID,
+		Details:      strings.Join(p.Details, "\n"),
+		Slug:         p.Slug,
+		SoldOut:      p.SoldOut,
 	}
 }
 
@@ -134,36 +162,41 @@ func productFormFrom(p domain.Product) productForm {
 func (f productForm) product() (domain.Product, error) {
 	cents, err := parseReais(f.Price)
 	return domain.Product{
-		Name:        f.Name,
-		PriceCents:  cents,
-		Sizes:       f.Sizes,
-		Description: f.Description,
-		Details:     strings.Split(strings.ReplaceAll(f.Details, "\r\n", "\n"), "\n"),
-		Slug:        f.Slug,
-		SoldOut:     f.SoldOut,
+		Name:         f.Name,
+		PriceCents:   cents,
+		Sizes:        f.Sizes,
+		Description:  f.Description,
+		CollectionID: f.CollectionID,
+		Details:      strings.Split(strings.ReplaceAll(f.Details, "\r\n", "\n"), "\n"),
+		Slug:         f.Slug,
+		SoldOut:      f.SoldOut,
 	}, err
 }
 
 type ProductInput struct {
-	Service   services.ProductService
-	Site      services.SiteService
-	Sessions  *scs.SessionManager
-	Templates *Templates
+	Service     services.ProductService
+	Collections services.CollectionService
+	Site        services.SiteService
+	Sessions    *scs.SessionManager
+	Templates   *Templates
 }
 
 // Product serves the catalogue screens. Every handler must be behind
 // Auth.RequireLogin.
 type Product struct {
-	service   services.ProductService
-	site      services.SiteService
-	sessions  *scs.SessionManager
-	templates *Templates
+	service     services.ProductService
+	collections services.CollectionService
+	site        services.SiteService
+	sessions    *scs.SessionManager
+	templates   *Templates
 }
 
 func NewProduct(in ProductInput) (*Product, error) {
 	switch {
 	case in.Service == nil:
 		return nil, errors.New("missing product service dependency")
+	case in.Collections == nil:
+		return nil, errors.New("missing collection service dependency")
 	case in.Site == nil:
 		return nil, errors.New("missing site service dependency")
 	case in.Sessions == nil:
@@ -171,7 +204,9 @@ func NewProduct(in ProductInput) (*Product, error) {
 	case in.Templates == nil:
 		return nil, errors.New("missing templates dependency")
 	}
-	return &Product{service: in.Service, site: in.Site, sessions: in.Sessions, templates: in.Templates}, nil
+	return &Product{
+		service: in.Service, collections: in.Collections, site: in.Site, sessions: in.Sessions, templates: in.Templates,
+	}, nil
 }
 
 func MustNewProduct(in ProductInput) *Product {
@@ -588,12 +623,33 @@ func (h *Product) renderForm(w http.ResponseWriter, r *http.Request, status int,
 			page.Colours = withStoredPhotos(page.Colours, *page.current)
 		}
 	}
+	page.Collections, page.CollectionsUnknown = h.formCollections(r, page)
 	if len(page.Colours) == 0 {
 		// Every piece needs a colour: one is ready to fill, so the rule
 		// never shows on the way to saving a first piece.
 		page.Colours = []colourBlock{{Key: "0", Stock: map[string]string{}}}
 	}
 	h.templates.render(w, r, status, "product_form.html", page)
+}
+
+// formCollections are the collections the form offers. Without the
+// list, the piece can still be saved as it is: the select keeps the
+// collection chosen, if any, and the page says why the others are
+// missing.
+func (h *Product) formCollections(r *http.Request, page productFormPage) ([]domain.Collection, bool) {
+	collections, err := h.collections.List(r.Context())
+	if err == nil {
+		return collections, false
+	}
+	slog.WarnContext(r.Context(), "couldn't list collections for the form", "error", err)
+	if page.Form.CollectionID == "" {
+		return nil, true
+	}
+	name := "A coleção escolhida"
+	if page.current != nil && page.current.CollectionID == page.Form.CollectionID {
+		name = page.current.CollectionName
+	}
+	return []domain.Collection{{ID: page.Form.CollectionID, Name: name}}, true
 }
 
 func (h *Product) renderMessage(w http.ResponseWriter, r *http.Request, status int, title, text string) {
@@ -604,16 +660,8 @@ func (h *Product) renderMessage(w http.ResponseWriter, r *http.Request, status i
 	})
 }
 
-// layout takes the flash messages out of the session: shown once, then
-// gone.
 func (h *Product) layout(r *http.Request) adminLayout {
-	ctx := r.Context()
-	user, _ := currentUser(ctx)
-	return adminLayout{
-		Email:      user.Email,
-		Flash:      h.sessions.PopString(ctx, sessionFlashKey),
-		FlashError: h.sessions.PopString(ctx, sessionFlashErrorKey),
-	}
+	return newAdminLayout(r, h.sessions, sectionProducts)
 }
 
 func (h *Product) flash(r *http.Request, key, msg string) {

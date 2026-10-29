@@ -1,0 +1,20 @@
+{{define "title"}}Apagar coleção{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>Apagar a coleção “{{.Collection.Name}}”?</h1>
+  {{if eq .Collection.Pieces 0}}
+  <p>Nenhuma peça está nela.</p>
+  {{else}}
+  <p>{{if eq .Collection.Pieces 1}}A peça dela fica{{else}}As {{.Collection.Pieces}} peças dela ficam{{end}} sem coleção. <strong>Nenhuma peça é apagada</strong>, e dá para colocá-las em outra coleção depois.</p>
+  {{end}}
+  <form method="post" action="/admin/collections/{{.Collection.ID}}/delete">
+    <div class="actions">
+      <button type="submit" class="danger">Sim, apagar a coleção</button>
+      <a href="/admin/collections/{{.Collection.ID}}">Não, voltar</a>
+    </div>
+  </form>
+</div>
+{{end}}

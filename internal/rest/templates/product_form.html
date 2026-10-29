@@ -43,6 +43,16 @@
       <p class="hint" id="price-hint">Em reais, como 189,90. Pode deixar vazio e preencher depois.</p>
       {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
 
+      <label for="collection">Coleção</label>
+      <select id="collection" name="collection_id"
+              aria-describedby="{{with index $e "collection"}}collection-error {{end}}collection-hint"
+              {{with index $e "collection"}}aria-invalid="true"{{end}}>
+        <option value="">Sem coleção</option>
+        {{range .Collections}}<option value="{{.ID}}" {{if eq .ID $.Form.CollectionID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <p class="hint" id="collection-hint">{{if .CollectionsUnknown}}Não consegui carregar a lista de coleções agora. A peça pode ser salva assim, e a coleção trocada depois.{{else if .Collections}}As coleções são cadastradas em “Coleções”, no alto da página.{{else}}Ainda não há coleções. Cadastre em “Coleções”, no alto da página, e depois escolha aqui.{{end}}</p>
+      {{with index $e "collection"}}<p class="field-error" id="collection-error">{{.}}</p>{{end}}
+
       <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>
         <legend>Tamanhos disponíveis</legend>
         <div class="choices">

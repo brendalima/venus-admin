@@ -119,6 +119,12 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `GET /admin/arquivadas` | The archived products, most recent first |
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product; linked from the archived list only |
 | `POST /admin/products/{id}/delete` | Deletes it for good, and its photo files |
+| `GET /admin/collections` | The collections, newest first, with how many pieces each has, and the form to add one |
+| `POST /admin/collections` | Creates a collection (form: `name`); a name in use, in any case, is refused |
+| `GET /admin/collections/{id}` | Rename form, with the link to delete it |
+| `POST /admin/collections/{id}` | Renames it (form: `name`); the pieces follow, and the site on the next publish |
+| `GET /admin/collections/{id}/delete` | Asks for confirmation, saying how many pieces will be left without a collection |
+| `POST /admin/collections/{id}/delete` | Deletes it; its pieces stay, in no collection |
 | `POST /admin/publish` | Starts the site's rebuild (below) |
 
 Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the colours. `colour_key` (repeated) lists the colour blocks in order; each block's key `<k>` names its fields: `colour_<k>_id` (empty for a new colour), `colour_<k>_name`, `colour_<k>_stock_<size>` (a quantity, or empty when that size is not counted), `colour_<k>_remove` (deletes an existing colour, photos and stock included), and its photos: `photos_<k>` (files), `photo_order_<k>` (the final order, cover first: `id:<image id>` for a photo the colour has, `new:<n>` for its nth file) and `photo_remove_<k>` (repeated, photos to delete). Keys are not positions and may have gaps. Without `photo_order_<k>`, as from a browser without JavaScript, the colour's files go after its existing photos.
@@ -186,6 +192,7 @@ curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
 #       {"id": "7e41…", "name": "Vinho", "hex": [], "images": [], "tracks_stock": false, "stock": []}
 #     ],
 #     "description": "Triângulo verde",
+#     "collection": {"id": "5b0e…", "name": "Verão 2026"},
 #     "details": ["Forro duplo"],
 #     "sold_out": false
 #   }
@@ -196,6 +203,7 @@ curl -s localhost:8080/api/products
 ```
 
 - A product without a price has **no `price_cents`**, so the site cannot show it as R$ 0,00. An empty `description` or `details` is left out too.
+- `collection` is the collection the piece belongs to, with its `id` and `name`, or `null` when it is in none. Pieces are put in a collection in their form, from the ones registered under "Coleções".
 - `colours` is always present, in the order the form shows them; each colour's `images` are its photos, cover first. Every product has at least one colour.
 - `hex` lists the colour's codes, each `#` and six lowercase hexadecimal digits, chosen in the form's colour pickers: the main colour first, then up to two secondary ones (a print, a trim). `[]` when the owners did not choose any.
 - `tracks_stock` says whether the colour's quantities are counted. When they are, `stock` has **every size of `sizes`**, in that order, and a size the owners did not count comes as `0`, which the site shows as unavailable. `quantity` is never left out, zero included. When they are not, `stock` is `[]` and the site shows the sizes without numbers. `sold_out` wins over any quantity.

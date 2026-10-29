@@ -314,6 +314,7 @@ func validForm() url.Values {
 		"price":            {"189,90"},
 		"sizes":            {"P", "M"},
 		"description":      {"Triângulo verde"},
+		"collection_id":    {"verao"},
 		"details":          {"Verde esmeralda\r\n\r\nForro duplo\r\n"},
 		colourKeyField:     {"0"},
 		"colour_0_id":      {""},
@@ -406,6 +407,9 @@ func TestProductCreate(t *testing.T) {
 		t.Fatalf("created %d products, want 1", len(app.products.created))
 	}
 	p := app.products.created[0]
+	if p.CollectionID != "verao" {
+		t.Errorf("collection = %q, want the one chosen", p.CollectionID)
+	}
 	if p.PriceCents != 18990 {
 		t.Errorf("price = %d cents, want 18990", p.PriceCents)
 	}
