@@ -19,6 +19,7 @@ const (
 	ConflictEmail      = "email"
 	ConflictSlug       = "slug"
 	ConflictColourName = "colour name"
+	ConflictCollection = "collection name"
 )
 
 func (e *ConflictError) Error() string { return e.Subject + " already in use" }

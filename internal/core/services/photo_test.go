@@ -75,12 +75,12 @@ type photoFixture struct {
 
 func newPhotoFixture(ps ...domain.Product) *photoFixture {
 	f := &photoFixture{repo: newMockProductRepository(ps...), store: newMockImageStore(), processor: &mockProcessor{}}
-	f.service = MustNewProduct(ProductInput{Repo: f.repo, Store: f.store, Processor: f.processor})
+	f.service = MustNewProduct(ProductInput{Repo: f.repo, Collections: newMockCollectionRepository(), Store: f.store, Processor: f.processor})
 	return f
 }
 
 func newTestProductService(repo *mockProductRepository) *Product {
-	return MustNewProduct(ProductInput{Repo: repo, Store: newMockImageStore(), Processor: &mockProcessor{}})
+	return MustNewProduct(ProductInput{Repo: repo, Collections: newMockCollectionRepository(), Store: newMockImageStore(), Processor: &mockProcessor{}})
 }
 
 // withImages is existing with stored photos a, b and c in its colour, in

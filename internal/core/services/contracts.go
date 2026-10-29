@@ -47,6 +47,20 @@ type PasswordResetService interface {
 // ProductService manages the catalogue. A product's colours, with their
 // photos and stock, are saved with it: Create and Update apply a colour
 // edit together with the fields, all or nothing.
+// CollectionService keeps the collections pieces are grouped in.
+type CollectionService interface {
+	// List returns every collection, the newest first, each with how
+	// many pieces it has.
+	List(ctx context.Context) ([]domain.Collection, error)
+	GetByID(ctx context.Context, id string) (domain.Collection, error)
+	// Create and Rename report a name that is empty, too long or already
+	// in use as *domain.ValidationError on "name".
+	Create(ctx context.Context, name string) (domain.Collection, error)
+	Rename(ctx context.Context, id, name string) (domain.Collection, error)
+	// Delete leaves the collection's pieces without one.
+	Delete(ctx context.Context, id string) error
+}
+
 type ProductService interface {
 	// List returns the collection, which is what the site shows: archived
 	// products are left out.

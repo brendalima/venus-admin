@@ -43,6 +43,16 @@
       <p class="hint" id="price-hint">Em reais, como 189,90. Pode deixar vazio e preencher depois.</p>
       {{with index $e "price"}}<p class="field-error" id="price-error">{{.}}</p>{{end}}
 
+      <label for="collection">Coleção</label>
+      <select id="collection" name="collection_id"
+              aria-describedby="{{with index $e "collection"}}collection-error {{end}}collection-hint"
+              {{with index $e "collection"}}aria-invalid="true"{{end}}>
+        <option value="">Sem coleção</option>
+        {{range .Collections}}<option value="{{.ID}}" {{if eq .ID $.Form.CollectionID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <p class="hint" id="collection-hint">{{if .CollectionsUnknown}}Não consegui carregar a lista de coleções agora. A peça pode ser salva assim, e a coleção trocada depois.{{else if .Collections}}As coleções são cadastradas em “Coleções”, no alto da página.{{else}}Ainda não há coleções. Cadastre em “Coleções”, no alto da página, e depois escolha aqui.{{end}}</p>
+      {{with index $e "collection"}}<p class="field-error" id="collection-error">{{.}}</p>{{end}}
+
       <fieldset {{with index $e "sizes"}}aria-describedby="sizes-error"{{end}}>
         <legend>Tamanhos disponíveis</legend>
         <div class="choices">
@@ -53,9 +63,9 @@
       </fieldset>
       {{with index $e "sizes"}}<p class="field-error" id="sizes-error">{{.}}</p>{{end}}
 
-      <label for="description">Descrição curta</label>
-      <textarea id="description" name="description" rows="2" aria-describedby="description-hint">{{.Form.Description}}</textarea>
-      <p class="hint" id="description-hint">Aparece no card da peça. Uma frase basta.</p>
+      <label for="description">Descrição</label>
+      <textarea id="description" name="description" rows="4" aria-describedby="description-hint">{{.Form.Description}}</textarea>
+      <p class="hint" id="description-hint">Escreva um parágrafo sobre o modelo.</p>
 
       <label for="details">Detalhes</label>
       <textarea id="details" name="details" rows="5" aria-describedby="details-hint">{{.Form.Details}}</textarea>
@@ -117,13 +127,13 @@
   <p><strong>Esta peça está arquivada.</strong> Ela não aparece no site, mas continua guardada com as fotos.</p>
   <form method="post" action="/admin/products/{{.ID}}/unarchive">
     <div class="actions">
-      <button type="submit" class="secondary">Voltar para a coleção</button>
+      <button type="submit" class="secondary">Voltar para o site</button>
       <a href="/admin/arquivadas">Ver as peças arquivadas</a>
     </div>
   </form>
 </div>
 {{else if .ID}}
-<p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar da coleção</a></p>
+<p class="actions"><a href="/admin/products/{{.ID}}/archive">Tirar do site</a></p>
 {{end}}
 {{end}}
 
@@ -149,6 +159,32 @@
            {{with index .Errors "name"}}aria-invalid="true"{{end}}>
     <p class="hint" id="colour-{{.Key}}-name-hint">Como vocês chamam a cor: Bege, Vinho, Verde-água.</p>
     {{with index .Errors "name"}}<p class="field-error" id="colour-{{$k}}-name-error">{{.}}</p>{{end}}
+
+    {{/* One row per code, the main one first. The pickers have no name:
+         each only fills the text field next to it, which is what is sent,
+         and which can be left empty. photos.js shows the pickers, keeps
+         each pair in step, takes off the spare rows and adds rows with
+         "+"; without JavaScript the codes are typed in the spare rows. */}}
+    <fieldset class="hexes" data-hexes data-max="{{.MaxHexes}}" aria-describedby="colour-{{.Key}}-hex-hint">
+      <legend>Código da cor <span class="hint">(opcional)</span></legend>
+      <p class="hint" id="colour-{{.Key}}-hex-hint">Clique no quadrado para escolher a cor, ou cole o código, como #C8A27C. O primeiro é a cor principal; os outros, as secundárias de uma estampa ou de um detalhe.</p>
+      {{range .HexRows}}
+      {{$err := printf "colour-%s-hex-%d-error" $k .Index}}
+      <div class="hex-row" data-hex-row {{if .Spare}}data-hex-spare{{end}}>
+        <div class="hex">
+          <input type="color" value="{{.Picker}}" data-hex-picker aria-label="Escolher a cor" hidden>
+          <input name="colour_{{$k}}_hex" type="text" value="{{.Value}}" placeholder="#C8A27C"
+                 autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="7" data-hex-text
+                 aria-label="{{if .Main}}Código da cor principal{{else}}Código de uma cor secundária{{end}}"
+                 {{if .Error}}aria-invalid="true" aria-describedby="{{$err}}"{{end}}>
+          <button type="button" class="secondary" data-drop-hex hidden>Tirar</button>
+        </div>
+        {{with .Error}}<p class="field-error" id="{{$err}}">{{.}}</p>{{end}}
+      </div>
+      {{end}}
+      {{with index .Errors "hex"}}<p class="field-error">{{.}}</p>{{end}}
+      <button type="button" class="secondary add-hex" data-add-hex hidden>+ Cor secundária</button>
+    </fieldset>
 
     <fieldset class="stock" aria-describedby="colour-{{.Key}}-stock-hint">
       <legend>Quantidade em estoque</legend>

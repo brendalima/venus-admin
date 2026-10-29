@@ -35,6 +35,17 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   @media (max-width: 30rem) { header .who { display: none; } }
+  header { flex-wrap: wrap; }
+  .sections { display: flex; gap: .25rem; margin-right: auto; }
+  .sections a {
+    padding: .45rem .75rem; border-radius: .5rem; color: var(--muted); font-weight: 600;
+  }
+  .sections a:hover { color: var(--text); }
+  .sections a[aria-current=page] { color: var(--text); background: var(--bg); box-shadow: inset 0 -2px 0 var(--accent); }
+  /* On a phone the sections get their own row, under the name. */
+  @media (max-width: 30rem) {
+    .sections { order: 3; flex-basis: 100%; margin: 0 0 0 -.75rem; }
+  }
   main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem; }
   h1 { font-size: 1.5rem; margin: 0 0 1rem; }
   .card {
@@ -45,11 +56,17 @@
   /* A legend's top margin is unreliable across browsers; the fieldset carries it. */
   fieldset { border: 0; margin: 1.25rem 0 0; padding: 0; min-width: 0; }
   legend { margin-top: 0; }
-  input[type=email], input[type=password], input[type=text], textarea {
+  input[type=email], input[type=password], input[type=text], textarea, select {
     width: 100%; padding: .75rem; font: inherit; color: inherit;
     border: 1px solid var(--border); border-radius: .5rem; background: #fff;
   }
   textarea { resize: vertical; }
+  select { appearance: auto; }
+  .new-collection { display: flex; gap: .5rem; align-items: flex-start; }
+  .new-collection input { flex: 1; min-width: 0; }
+  .collections, .products.collections { margin-top: 1.5rem; }
+  .collections .meta { display: block; }
+  label.first { margin-top: 0; }
   input[aria-invalid=true], textarea[aria-invalid=true] { border: 2px solid var(--error-text); }
   .hint { font-size: .9rem; color: var(--muted); margin: .25rem 0 0; }
   .field-error { font-size: .95rem; color: var(--error-text); font-weight: 600; margin: .25rem 0 0; }
@@ -153,6 +170,15 @@
   .colour .photo-section { margin-top: 1.5rem; padding-top: 1rem; }
   .colour h4 { font-size: 1rem; margin: 0 0 .25rem; }
   .colour label:first-of-type { margin-top: .75rem; }
+  .hexes { margin-top: 1.25rem; }
+  .hex-row { margin-top: .5rem; }
+  .hex { display: flex; align-items: center; gap: .5rem; max-width: 20rem; }
+  .hex input[type=text] { max-width: 9rem; }
+  .add-hex { margin-top: .75rem; }
+  .hex input[type=color] {
+    flex: none; width: 2.75rem; height: 2.75rem; padding: .2rem; cursor: pointer;
+    border: 1px solid var(--border); border-radius: .5rem; background: #fff;
+  }
   .stock-grid { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .5rem; }
   .stock-size { display: flex; align-items: center; gap: .4rem; }
   .stock-size label { margin: 0; min-width: 1.75rem; }
@@ -193,6 +219,10 @@
 {{define "admin-header"}}
 <header>
   <a href="/admin"><strong>Vênus Oasis</strong></a>
+  <nav class="sections" aria-label="Seções do painel">
+    <a href="/admin" {{if eq .Section "products"}}aria-current="page"{{end}}>Peças</a>
+    <a href="/admin/collections" {{if eq .Section "collections"}}aria-current="page"{{end}}>Coleções</a>
+  </nav>
   <div class="right">
     <span class="who">{{.Email}}</span>
     <form class="inline" method="post" action="/logout">
@@ -210,7 +240,7 @@
   {{else}}<span class="thumb" aria-hidden="true"></span>{{end}}
   <span>
     <strong>{{.Name}}</strong>
-    <span class="meta">{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}{{if .TracksStock}} · {{.StockTotal}} em estoque{{end}}{{if not .Images}} · Sem fotos{{end}}{{if .Archived}} · Arquivada em {{date .ArchivedAt}}{{end}}</span>
+    <span class="meta">{{with .CollectionName}}{{.}} · {{end}}{{if .HasPrice}}R$ {{reais .PriceCents}}{{else}}Sem preço{{end}} · {{join .Sizes " "}}{{if .TracksStock}} · {{.StockTotal}} em estoque{{end}}{{if not .Images}} · Sem fotos{{end}}{{if .Archived}} · Arquivada em {{date .ArchivedAt}}{{end}}</span>
     {{if .SoldOut}}<span class="badge">Esgotada</span>{{end}}
   </span>
 </a>

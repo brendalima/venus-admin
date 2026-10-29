@@ -1,0 +1,22 @@
+{{define "title"}}Coleção {{.Collection.Name}}{{end}}
+
+{{define "header"}}{{template "admin-header" .}}{{end}}
+
+{{define "content"}}
+<div class="card">
+  <h1>{{.Collection.Name}}</h1>
+  <p class="muted">{{if eq .Collection.Pieces 0}}Nenhuma peça nesta coleção ainda.{{else if eq .Collection.Pieces 1}}1 peça nesta coleção.{{else}}{{.Collection.Pieces}} peças nesta coleção.{{end}}</p>
+  <form method="post" action="/admin/collections/{{.Collection.ID}}" novalidate>
+    <label for="name">Nome da coleção</label>
+    <input id="name" name="name" type="text" value="{{.Name}}" autocomplete="off" required
+           aria-describedby="{{if .Error}}name-error {{end}}name-hint" {{if .Error}}aria-invalid="true" autofocus{{end}}>
+    {{with .Error}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+    <p class="hint" id="name-hint">O nome novo vale para todas as peças da coleção, e chega ao site na próxima publicação.</p>
+    <div class="actions">
+      <button type="submit">Salvar nome</button>
+      <a href="/admin/collections">Cancelar</a>
+    </div>
+  </form>
+</div>
+<p class="actions"><a href="/admin/collections/{{.Collection.ID}}/delete">Apagar esta coleção</a></p>
+{{end}}

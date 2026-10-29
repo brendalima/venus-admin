@@ -67,13 +67,14 @@ func TestAPIProducts(t *testing.T) {
 
 	withPhotos := aurora()
 	withPhotos.Description = "Verde-água"
+	withPhotos.CollectionID, withPhotos.CollectionName = "verao", "Verão 2026"
 	withPhotos.Details = []string{"Forro duplo"}
 	withPhotos.Sizes = []string{"P", "M", "G"}
 	// Two colours, one counting stock with M missing and G stored at zero,
 	// one not counting. Each colour carries its own photos; there is no
 	// flat list at the product level any more.
 	withPhotos.Colours = []domain.Colour{
-		{ID: "c1", Name: "Bege", Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}},
+		{ID: "c1", Name: "Bege", Hexes: []string{"#c8a27c", "#ffffff"}, Images: []domain.Image{{ID: "i1", Key600: "produtos/i1-600.jpg", Key1200: "produtos/i1-1200.jpg"}},
 			Stock: []domain.Stock{{Size: "P", Quantity: 1}, {Size: "G", Quantity: 0}}},
 		{ID: "c2", Name: "Vinho", Images: []domain.Image{{ID: "i2", Key600: "produtos/i2-600.jpg", Key1200: "produtos/i2-1200.jpg"}}},
 	}
@@ -113,10 +114,10 @@ func TestAPIProducts(t *testing.T) {
 	// a zero left out would read as not counted rather than unavailable.
 	var wantColours any
 	if err := json.Unmarshal([]byte(`[
-		{"id": "c1", "name": "Bege", "tracks_stock": true,
+		{"id": "c1", "name": "Bege", "hex": ["#c8a27c", "#ffffff"], "tracks_stock": true,
 		 "images": [{"url_600": "`+testImageBaseURL+`/produtos/i1-600.jpg", "url_1200": "`+testImageBaseURL+`/produtos/i1-1200.jpg"}],
 		 "stock": [{"size": "P", "quantity": 1}, {"size": "M", "quantity": 0}, {"size": "G", "quantity": 0}]},
-		{"id": "c2", "name": "Vinho", "tracks_stock": false,
+		{"id": "c2", "name": "Vinho", "hex": [], "tracks_stock": false,
 		 "images": [{"url_600": "`+testImageBaseURL+`/produtos/i2-600.jpg", "url_1200": "`+testImageBaseURL+`/produtos/i2-1200.jpg"}],
 		 "stock": []}
 	]`), &wantColours); err != nil {
@@ -129,6 +130,13 @@ func TestAPIProducts(t *testing.T) {
 	// No price must not reach the site as R$ 0,00: the field is absent.
 	if _, has := o["price_cents"]; has {
 		t.Errorf("a product without a price has price_cents: %v", o)
+	}
+	if want := map[string]any{"id": "verao", "name": "Verão 2026"}; !reflect.DeepEqual(a["collection"], want) {
+		t.Errorf("aurora collection = %v, want %v", a["collection"], want)
+	}
+	// A piece in no collection says so, rather than leaving it out.
+	if c, has := o["collection"]; !has || c != nil {
+		t.Errorf("orion collection = %v (present %v), want null", c, has)
 	}
 	for _, field := range []string{"description", "details"} {
 		if _, has := o[field]; has {

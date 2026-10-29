@@ -20,27 +20,33 @@ var _ ProductService = (*Product)(nil)
 const imageContentType = "image/jpeg"
 
 type Product struct {
-	repo      repository.ProductRepository
-	store     storage.ImageStore
-	processor storage.ImageProcessor
+	repo        repository.ProductRepository
+	collections repository.CollectionRepository
+	store       storage.ImageStore
+	processor   storage.ImageProcessor
 }
 
 type ProductInput struct {
-	Repo      repository.ProductRepository
-	Store     storage.ImageStore
-	Processor storage.ImageProcessor
+	Repo repository.ProductRepository
+	// Collections is asked whether the collection chosen for a piece
+	// still exists.
+	Collections repository.CollectionRepository
+	Store       storage.ImageStore
+	Processor   storage.ImageProcessor
 }
 
 func NewProduct(in ProductInput) (*Product, error) {
 	switch {
 	case in.Repo == nil:
 		return nil, errors.New("missing product repository dependency")
+	case in.Collections == nil:
+		return nil, errors.New("missing collection repository dependency")
 	case in.Store == nil:
 		return nil, errors.New("missing image store dependency")
 	case in.Processor == nil:
 		return nil, errors.New("missing image processor dependency")
 	}
-	return &Product{repo: in.Repo, store: in.Store, processor: in.Processor}, nil
+	return &Product{repo: in.Repo, collections: in.Collections, store: in.Store, processor: in.Processor}, nil
 }
 
 func MustNewProduct(in ProductInput) *Product {
@@ -72,7 +78,11 @@ func (s *Product) Create(ctx context.Context, p domain.Product, colours domain.C
 	p.ID = uuid.New().String()
 	p.Slug = domain.Slugify(p.Name)
 
-	prepared, err := s.prepareColours(ctx, nil, colours, p.Sizes, p.Validate())
+	fieldErr, err := s.validate(ctx, p)
+	if err != nil {
+		return domain.Product{}, err
+	}
+	prepared, err := s.prepareColours(ctx, nil, colours, p.Sizes, fieldErr)
 	if err != nil {
 		return domain.Product{}, err
 	}
@@ -95,7 +105,10 @@ func (s *Product) Update(ctx context.Context, p domain.Product, colours *domain.
 	if p.Slug == "" {
 		p.Slug = domain.Slugify(p.Name)
 	}
-	fieldErr := p.Validate()
+	fieldErr, err := s.validate(ctx, p)
+	if err != nil {
+		return domain.Product{}, err
+	}
 	if fieldErr != nil && colours == nil {
 		return domain.Product{}, fieldErr
 	}
@@ -130,6 +143,26 @@ func (s *Product) Update(ctx context.Context, p domain.Product, colours *domain.
 		s.deleteFiles(ctx, img.Key600, img.Key1200)
 	}
 	return updated, nil
+}
+
+// validate checks p's fields, and that its collection exists: it may
+// have been deleted while the form was open. The problems with what was
+// typed come first; err is a failure to check.
+func (s *Product) validate(ctx context.Context, p domain.Product) (fieldErr, err error) {
+	fieldErr = p.Validate()
+	if p.CollectionID == "" {
+		return fieldErr, nil
+	}
+	_, err = s.collections.GetByID(ctx, p.CollectionID)
+	var notFound *domain.NotFoundError
+	if errors.As(err, &notFound) {
+		return errors.Join(fieldErr, domain.NewValidationError("collection",
+			"Essa coleção não existe mais. Escolha outra, ou deixe a peça sem coleção.")), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("couldn't check collection %s: %w", p.CollectionID, err)
+	}
+	return fieldErr, nil
 }
 
 // saveError turns a uniqueness clash into a message on the field to
@@ -331,7 +364,7 @@ func (s *Product) prepareColours(ctx context.Context, current []domain.Colour, e
 		if c.Blank() {
 			continue
 		}
-		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock}
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Hexes: c.Hexes, Stock: c.Stock}
 		if colour.ID == "" {
 			colour.ID = uuid.New().String()
 			out.changes.AddedColours = append(out.changes.AddedColours, colour.ID)

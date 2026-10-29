@@ -21,12 +21,17 @@ var (
 )
 
 const (
-	productColumns = `id, slug, name, price_cents, sizes, description, details, sold_out, position, archived_at, created_at, updated_at`
+	// collectionNameColumn reads the name of a product's collection, for
+	// showing it; empty when the piece is in none.
+	collectionNameColumn = `COALESCE((SELECT c.name FROM collections c WHERE c.id = products.collection_id), '')`
+	productColumns       = `id, slug, name, price_cents, sizes, description, COALESCE(collection_id::text, ''), ` +
+		collectionNameColumn + `, details, sold_out, position, archived_at, created_at, updated_at`
 
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
 	productsSlugKey       = "products_slug_key"
 	coloursNameKey        = "product_colours_product_name_key"
+	collectionsNameKey    = "collections_name_key"
 )
 
 type Product struct {
@@ -128,12 +133,12 @@ func (r *Product) Create(ctx context.Context, p domain.Product) (domain.Product,
 	// back to created_at. With two or three people using the admin that
 	// is not worth a lock.
 	err = tx.QueryRowContext(ctx,
-		`INSERT INTO products (id, slug, name, price_cents, sizes, description, details, sold_out, position)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+		`INSERT INTO products (id, slug, name, price_cents, sizes, description, collection_id, details, sold_out, position)
+		 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid, $8, $9,
 		         (SELECT COALESCE(max(position), 0) + 1 FROM products))
-		 RETURNING position, created_at, updated_at`,
-		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut,
-	).Scan(&p.Position, &p.CreatedAt, &p.UpdatedAt)
+		 RETURNING position, created_at, updated_at, `+collectionNameColumn,
+		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, p.CollectionID, nonNil(p.Details), p.SoldOut,
+	).Scan(&p.Position, &p.CreatedAt, &p.UpdatedAt, &p.CollectionName)
 	if err != nil {
 		return domain.Product{}, translateWriteError(err, "couldn't create product")
 	}
@@ -357,11 +362,11 @@ func updateFields(ctx context.Context, q querier, p domain.Product) (domain.Prod
 	err := q.QueryRowContext(ctx,
 		`UPDATE products
 		 SET slug = $2, name = $3, price_cents = $4, sizes = $5, description = $6,
-		     details = $7, sold_out = $8, position = $9
+		     collection_id = NULLIF($7, '')::uuid, details = $8, sold_out = $9, position = $10
 		 WHERE id = $1
-		 RETURNING archived_at, created_at, updated_at`,
-		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, nonNil(p.Details), p.SoldOut, p.Position,
-	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
+		 RETURNING archived_at, created_at, updated_at, `+collectionNameColumn,
+		p.ID, p.Slug, p.Name, p.PriceCents, nonNil(p.Sizes), p.Description, p.CollectionID, nonNil(p.Details), p.SoldOut, p.Position,
+	).Scan((*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt, &p.CollectionName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.NewNotFoundError("product not found")
 	}
@@ -387,8 +392,8 @@ func lockColours(ctx context.Context, tx *sql.Tx, productID string) (map[string]
 
 func insertColour(ctx context.Context, tx *sql.Tx, productID string, c domain.Colour, position int) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO product_colours (id, product_id, name, position) VALUES ($1, $2, $3, $4)`,
-		c.ID, productID, c.Name, position)
+		`INSERT INTO product_colours (id, product_id, name, hex, position) VALUES ($1, $2, $3, $4, $5)`,
+		c.ID, productID, c.Name, nonNil(c.Hexes), position)
 	if err != nil {
 		return translateWriteError(err, "couldn't add colour")
 	}
@@ -410,9 +415,10 @@ func insertColour(ctx context.Context, tx *sql.Tx, productID string, c domain.Co
 // in c that stored does not have are new; the removed ones are already
 // gone.
 func updateColour(ctx context.Context, tx *sql.Tx, productID string, stored, c domain.Colour, position int) error {
-	if stored.Name != c.Name || int(stored.Position) != position {
+	if stored.Name != c.Name || !slices.Equal(stored.Hexes, c.Hexes) || int(stored.Position) != position {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE product_colours SET name = $2, position = $3 WHERE id = $1`, c.ID, c.Name, position,
+			`UPDATE product_colours SET name = $2, hex = $3, position = $4 WHERE id = $1`,
+			c.ID, c.Name, nonNil(c.Hexes), position,
 		); err != nil {
 			return translateWriteError(err, "couldn't update colour")
 		}
@@ -607,7 +613,7 @@ func sizeRank(sizes []string, size string) int {
 // them names the table: FOR UPDATE alone would lock the colours too, which
 // is harmless but says more than meant.
 const (
-	readColoursQuery = `SELECT id, product_id, name, position, created_at FROM product_colours
+	readColoursQuery = `SELECT id, product_id, name, hex, position, created_at FROM product_colours
 		WHERE product_id = ANY($1)
 		ORDER BY product_id, position, created_at, id`
 	readImagesQuery = `SELECT i.id, i.colour_id, i.key_600, i.key_1200, i.position, i.created_at
@@ -633,7 +639,7 @@ func readColours(ctx context.Context, q querier, productIDs []string, forUpdate 
 	var colours []domain.Colour
 	err := queryRows(ctx, q, coloursQuery, productIDs, func(rows *sql.Rows) error {
 		c := domain.Colour{Images: []domain.Image{}, Stock: []domain.Stock{}}
-		if err := rows.Scan(&c.ID, &c.ProductID, &c.Name, &c.Position, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProductID, &c.Name, &c.Hexes, &c.Position, &c.CreatedAt); err != nil {
 			return err
 		}
 		colours = append(colours, c)
@@ -701,7 +707,7 @@ type scanner interface {
 
 func scanProduct(s scanner) (domain.Product, error) {
 	var p domain.Product
-	err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.PriceCents, &p.Sizes, &p.Description,
+	err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.PriceCents, &p.Sizes, &p.Description, &p.CollectionID, &p.CollectionName,
 		&p.Details, &p.SoldOut, &p.Position, (*nullTime)(&p.ArchivedAt), &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
@@ -727,8 +733,11 @@ func translateWriteError(err error, action string) error {
 			return domain.NewConflictError(domain.ConflictSlug)
 		case coloursNameKey:
 			return domain.NewConflictError(domain.ConflictColourName)
+		case collectionsNameKey:
+			return domain.NewConflictError(domain.ConflictCollection)
 		}
 	}
+
 	return fmt.Errorf("%s: %w", action, err)
 }
 

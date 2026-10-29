@@ -69,6 +69,7 @@ type testApp struct {
 	client   *http.Client
 	service  *mockUserService
 	products *mockProductService
+	colls    *mockCollectionService
 	site     *mockSiteService
 	resets   *mockPasswordResetService
 }
@@ -90,8 +91,10 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		Templates: templates,
 	})
 	products := newMockProductService()
+	colls := newMockCollectionService()
 	site := &mockSiteService{status: domain.SiteStatus{CanPublish: true}}
-	product := MustNewProduct(ProductInput{Service: products, Site: site, Sessions: sessions, Templates: templates})
+	product := MustNewProduct(ProductInput{Service: products, Collections: colls, Site: site, Sessions: sessions, Templates: templates})
+	collection := MustNewCollection(CollectionInput{Service: colls, Sessions: sessions, Templates: templates})
 	api := MustNewAPI(APIInput{Service: products, Token: testAPIToken, ImageBaseURL: testImageBaseURL})
 	resets := newMockPasswordResetService(service)
 	// The same limiter caps both forms here; cmd/api gives each its own.
@@ -119,11 +122,17 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 	app.Handle("POST /admin/products/{id}/archive", private(product.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(product.Unarchive))
 	app.Handle("GET /admin/arquivadas", private(product.ListArchived))
-	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// Reached from /admin/arquivadas only: a piece leaves the site
 	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(product.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(product.Delete))
 	app.Handle("POST /admin/publish", private(product.Publish))
+	app.Handle("GET /admin/collections", private(collection.List))
+	app.Handle("POST /admin/collections", private(collection.Create))
+	app.Handle("GET /admin/collections/{id}", private(collection.Edit))
+	app.Handle("POST /admin/collections/{id}", private(collection.Update))
+	app.Handle("GET /admin/collections/{id}/delete", private(collection.ConfirmDelete))
+	app.Handle("POST /admin/collections/{id}/delete", private(collection.Delete))
 	// Stands in for anything that stores data before login, giving the
 	// visitor a real session token to carry into it.
 	app.HandleFunc("GET /visit", func(_ http.ResponseWriter, r *http.Request) {
@@ -147,7 +156,7 @@ func newTestApp(t *testing.T, limiter *LoginLimiter) *testApp {
 		// Redirects are what is being tested; do not follow them.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &testApp{server: server, client: client, service: service, products: products, site: site, resets: resets}
+	return &testApp{server: server, client: client, service: service, products: products, colls: colls, site: site, resets: resets}
 }
 
 // withNewDevice returns the same app seen from another browser: same

@@ -199,7 +199,7 @@ func (m *mockProductService) applyColours(current []domain.Colour, edit domain.C
 			}
 			mentioned++
 		}
-		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock, Images: []domain.Image{}}
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Hexes: c.Hexes, Stock: c.Stock, Images: []domain.Image{}}
 		if colour.ID == "" {
 			colour.ID = fmt.Sprintf("added-%d", n)
 		}
@@ -314,6 +314,7 @@ func validForm() url.Values {
 		"price":            {"189,90"},
 		"sizes":            {"P", "M"},
 		"description":      {"Triângulo verde"},
+		"collection_id":    {"verao"},
 		"details":          {"Verde esmeralda\r\n\r\nForro duplo\r\n"},
 		colourKeyField:     {"0"},
 		"colour_0_id":      {""},
@@ -406,6 +407,9 @@ func TestProductCreate(t *testing.T) {
 		t.Fatalf("created %d products, want 1", len(app.products.created))
 	}
 	p := app.products.created[0]
+	if p.CollectionID != "verao" {
+		t.Errorf("collection = %q, want the one chosen", p.CollectionID)
+	}
 	if p.PriceCents != 18990 {
 		t.Errorf("price = %d cents, want 18990", p.PriceCents)
 	}
@@ -539,7 +543,7 @@ func TestProductEdit(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	for _, want := range []string{`value="Biquíni Aurora"`, `value="189,90"`, "Verde esmeralda\nForro duplo", `value="biquini-aurora"`, "Tirar da coleção"} {
+	for _, want := range []string{`value="Biquíni Aurora"`, `value="189,90"`, "Verde esmeralda\nForro duplo", `value="biquini-aurora"`, "Tirar do site"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("edit form does not contain %q", want)
 		}
@@ -691,7 +695,7 @@ func TestProductArchive(t *testing.T) {
 	}
 
 	res, body := app.get(t, path, nil)
-	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Tirar “Biquíni Aurora” da coleção?") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Tirar “Biquíni Aurora” do site?") {
 		t.Fatalf("confirmation page: status %d", res.StatusCode)
 	}
 	if app.products.products[auroraID].Archived() {
@@ -707,7 +711,7 @@ func TestProductArchive(t *testing.T) {
 	}
 
 	_, body = app.get(t, "/admin", nil)
-	if !strings.Contains(body, "saiu da coleção") || !strings.Contains(body, "Nenhuma peça cadastrada ainda") {
+	if !strings.Contains(body, "saiu do site") || !strings.Contains(body, "Nenhuma peça cadastrada ainda") {
 		t.Error("the list still shows the archived product, or does not say it left")
 	}
 	if !strings.Contains(body, "Peças arquivadas (1)") {
@@ -718,7 +722,7 @@ func TestProductArchive(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("archived list: status %d", res.StatusCode)
 	}
-	for _, want := range []string{"Biquíni Aurora", "Arquivada em 18/10/2026", "Voltar para a coleção", "/admin/products/" + auroraID + "/delete"} {
+	for _, want := range []string{"Biquíni Aurora", "Arquivada em 18/10/2026", "Voltar para o site", "/admin/products/" + auroraID + "/delete"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("archived list does not show %q", want)
 		}
@@ -749,7 +753,7 @@ func TestProductUnarchive(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(body), "<li") || !strings.Contains(body, "voltou para a coleção") {
+	if !strings.HasPrefix(strings.TrimSpace(body), "<li") || !strings.Contains(body, "voltou para o site") {
 		t.Errorf("want only the row saying it is back, got:\n%s", body)
 	}
 	if app.products.products[auroraID].Archived() {

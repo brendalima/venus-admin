@@ -140,11 +140,21 @@ func region(t *testing.T, body, attr string) string {
 func TestEditPageShowsColours(t *testing.T) {
 	app := newTestApp(t, nil)
 	app.login(t)
-	app.products.add(auroraInColours(3))
+	p := auroraInColours(3)
+	p.Colours[0].Hexes = []string{"#c8a27c", "#ffffff"}
+	app.products.add(p)
 
 	_, body := app.get(t, "/admin/products/"+auroraID, nil)
 	for _, want := range []string{
 		"Cores e estoque",
+		// The codes are what is sent, main first; each picker starts at
+		// its code, or at white, and shows only with JavaScript.
+		`<input type="color" value="#c8a27c" data-hex-picker aria-label="Escolher a cor" hidden>`,
+		`name="colour_0_hex" type="text" value="#c8a27c"`,
+		`name="colour_0_hex" type="text" value="#ffffff"`,
+		`aria-label="Código da cor principal"`, `aria-label="Código de uma cor secundária"`,
+		`name="colour_1_hex" type="text" value=""`,
+		`data-max="3"`, "+ Cor secundária",
 		`enctype="multipart/form-data"`,
 		`<script src="/static/photos.js?v=`,
 		`data-next-key="2"`,
@@ -222,6 +232,9 @@ func TestSaveWithColours(t *testing.T) {
 	form.Set("colour_1_remove", "on")
 	form.Set("colour_5_id", "")
 	form.Set("colour_5_name", " Verde ")
+	// Empty code fields, which the page offers spare, are left out.
+	form["colour_5_hex"] = []string{" 3A6B4C", ""}
+	form["colour_0_hex"] = []string{"", "#C8A27C", "#ffffff"}
 	form.Set("colour_5_stock_P", "3")
 	form.Set("colour_5_stock_M", "")
 	form.Set(photoRemoveField("0"), "img-2")
@@ -247,6 +260,9 @@ func TestSaveWithColours(t *testing.T) {
 	}
 	if data, err := bege.Photos.New[0].Bytes(); err != nil || string(data) != "bege" {
 		t.Errorf("Bege's new photo = %q, %v, want its own file", data, err)
+	}
+	if !slices.Equal(bege.Hexes, []string{"#C8A27C", "#ffffff"}) || !slices.Equal(verde.Hexes, []string{" 3A6B4C"}) {
+		t.Errorf("hex codes %q and %q, want them as typed, in order, without the empty ones", bege.Hexes, verde.Hexes)
 	}
 	if verde.ID != "" || verde.Name != " Verde " || !slices.Equal(verde.Stock, []domain.Stock{{Size: "P", Quantity: 3}}) {
 		t.Errorf("new colour %+v", verde)
@@ -382,6 +398,22 @@ func TestSaveWithColoursRefused(t *testing.T) {
 				`data-colour-fields="1"`: "Falta o nome da cor",
 			},
 			wantTexts: []string{`value="dois"`},
+		},
+		{
+			name:       "a hex code that is not a colour",
+			edit:       func(f url.Values) { f["colour_1_hex"] = []string{"", "#5a1a2b", "#vinho"} },
+			wantStatus: http.StatusBadRequest, wantService: true,
+			wantIn: map[string]string{
+				`data-colour-fields="1"`: "Escreva a cor como # e seis letras ou números",
+			},
+			// The empty field is gone, so the bad code is the second.
+			wantTexts: []string{`value="#vinho"`, `aria-describedby="colour-1-hex-1-error"`, `id="colour-1-hex-1-error"`},
+		},
+		{
+			name:       "too many hex codes",
+			edit:       func(f url.Values) { f["colour_0_hex"] = []string{"#000000", "#111111", "#222222", "#333333"} },
+			wantStatus: http.StatusBadRequest, wantService: true,
+			wantIn: map[string]string{`data-colour-fields="0"`: "Cada cor pode ter até 3 códigos"},
 		},
 		{
 			name:       "a quantity out of bounds",

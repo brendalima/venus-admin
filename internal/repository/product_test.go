@@ -442,7 +442,7 @@ func TestProductArchive(t *testing.T) {
 		t.Errorf("ListArchived: %+v, found %v", got, ok)
 	}
 	if _, ok := inArchive[kept.ID]; ok {
-		t.Error("ListArchived returns a product in the collection")
+		t.Error("ListArchived returns a product on the site")
 	}
 	if n, err := repo.CountArchived(ctx); err != nil || n != countBefore+1 {
 		t.Errorf("CountArchived = %d, %v; want %d", n, err, countBefore+1)

@@ -9,7 +9,7 @@
   {{if .Product.Archived}}
   <p class="muted">Arquivada, ela já não aparece no site. Se ela pode voltar um dia, deixe-a arquivada.</p>
   {{else}}
-  <p class="muted">Se ela só deve sair do site, prefira tirá-la da coleção: ela fica guardada com as fotos.</p>
+  <p class="muted">Se ela só deve sair do site, prefira arquivá-la: ela fica guardada com as fotos.</p>
   {{end}}
   <form method="post" action="/admin/products/{{.Product.ID}}/delete">
     <div class="actions">

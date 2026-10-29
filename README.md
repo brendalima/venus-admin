@@ -115,10 +115,16 @@ Every route here requires login; without it, the browser is sent to `/login`.
 | `POST /admin/products/{id}/colours/{colourID}/stock/{size}` | The list's "−" and "+": sets that size's quantity (form: `quantity=<n>`, the quantity wanted, not a change); answers the list row to HTMX |
 | `GET /admin/products/{id}/archive` | Asks for confirmation before taking the product out of the collection |
 | `POST /admin/products/{id}/archive` | Archives it: off the site on the next publish, kept with its photos |
-| `POST /admin/products/{id}/unarchive` | Puts it back in the collection, in its old place; answers a row saying so to HTMX |
+| `POST /admin/products/{id}/unarchive` | Puts it back on the site, in its old place; answers a row saying so to HTMX |
 | `GET /admin/arquivadas` | The archived products, most recent first |
 | `GET /admin/products/{id}/delete` | Asks for confirmation, naming the product; linked from the archived list only |
 | `POST /admin/products/{id}/delete` | Deletes it for good, and its photo files |
+| `GET /admin/collections` | The collections, newest first, with how many pieces each has, and the form to add one |
+| `POST /admin/collections` | Creates a collection (form: `name`); a name in use, in any case, is refused |
+| `GET /admin/collections/{id}` | Rename form, with the link to delete it |
+| `POST /admin/collections/{id}` | Renames it (form: `name`); the pieces follow, and the site on the next publish |
+| `GET /admin/collections/{id}/delete` | Asks for confirmation, saying how many pieces will be left without a collection |
+| `POST /admin/collections/{id}/delete` | Deletes it; its pieces stay, in no collection |
 | `POST /admin/publish` | Starts the site's rebuild (below) |
 
 Product form fields (`multipart/form-data`, since photos go with them): `name`, `price` (optional; reais as typed: `189`, `189,90`, `R$ 1.234,56`, `189.90`), `sizes` (repeated; `P`, `M`, `G`, `GG`), `description`, `details` (one per line), `sold_out` (checkbox), on edit `slug`, and the colours. `colour_key` (repeated) lists the colour blocks in order; each block's key `<k>` names its fields: `colour_<k>_id` (empty for a new colour), `colour_<k>_name`, `colour_<k>_stock_<size>` (a quantity, or empty when that size is not counted), `colour_<k>_remove` (deletes an existing colour, photos and stock included), and its photos: `photos_<k>` (files), `photo_order_<k>` (the final order, cover first: `id:<image id>` for a photo the colour has, `new:<n>` for its nth file) and `photo_remove_<k>` (repeated, photos to delete). Keys are not positions and may have gaps. Without `photo_order_<k>`, as from a browser without JavaScript, the colour's files go after its existing photos.
@@ -126,7 +132,7 @@ Product form fields (`multipart/form-data`, since photos go with them): `name`, 
 - **Validation** reports every field at once, next to the field, and the form comes back exactly as typed. A server failure keeps the form too.
 - **Prices** are typed in reais and converted to integer cents in one place, `internal/rest/price.go`. The price is optional for now: pieces can be catalogued before they are priced, and an empty price is stored as `0` ("Sem preço" in the list). A price that cannot be read is refused, never saved as zero.
 - **The address (slug)** comes from the name on creation. Renaming a product does not change it, so shared links keep working; it can be changed by hand under "Opções avançadas".
-- **Archiving, not deleting, is how a piece leaves the site.** The edit screen offers "Tirar da coleção", which keeps the product, its photos and its files, and suggests marking it sold out instead if it only ran out. Deleting for good is offered only from the archived list, through a confirmation page that says the photo files go too.
+- **Archiving, not deleting, is how a piece leaves the site.** The edit screen offers "Tirar do site", which keeps the product, its photos and its files, and suggests marking it sold out instead if it only ran out. Deleting for good is offered only from the archived list, through a confirmation page that says the photo files go too.
 
 ### Photos
 
@@ -160,7 +166,7 @@ Without `DEPLOY_HOOK_URL` there is nothing to rebuild. Development then only log
 
 ### The site's API
 
-`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product in the collection (archived ones are left out) in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
+`GET /api/products` is what the site's build reads, once per publish. Visitors never reach it. It needs `Authorization: Bearer $API_TOKEN` and answers every product on the site (archived ones are left out) in catalogue order, with no pagination: the build needs all of them, and there are a few dozen.
 
 ```bash
 curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
@@ -176,15 +182,17 @@ curl -s -H "Authorization: Bearer $API_TOKEN" localhost:8080/api/products
 #       {
 #         "id": "3c9d…",
 #         "name": "Bege",
+#         "hex": ["#c8a27c", "#ffffff"],
 #         "images": [
 #           {"url_600": "https://…/produtos/<image id>-600.jpg", "url_1200": "https://…/produtos/<image id>-1200.jpg"}
 #         ],
 #         "tracks_stock": true,
 #         "stock": [{"size": "P", "quantity": 1}, {"size": "M", "quantity": 2}, {"size": "G", "quantity": 0}]
 #       },
-#       {"id": "7e41…", "name": "Vinho", "images": [], "tracks_stock": false, "stock": []}
+#       {"id": "7e41…", "name": "Vinho", "hex": [], "images": [], "tracks_stock": false, "stock": []}
 #     ],
 #     "description": "Triângulo verde",
+#     "collection": {"id": "5b0e…", "name": "Verão 2026"},
 #     "details": ["Forro duplo"],
 #     "sold_out": false
 #   }
@@ -195,7 +203,9 @@ curl -s localhost:8080/api/products
 ```
 
 - A product without a price has **no `price_cents`**, so the site cannot show it as R$ 0,00. An empty `description` or `details` is left out too.
+- `collection` is the collection the piece belongs to, with its `id` and `name`, or `null` when it is in none. Pieces are put in a collection in their form, from the ones registered under "Coleções".
 - `colours` is always present, in the order the form shows them; each colour's `images` are its photos, cover first. Every product has at least one colour.
+- `hex` lists the colour's codes, each `#` and six lowercase hexadecimal digits, chosen in the form's colour pickers: the main colour first, then up to two secondary ones (a print, a trim). `[]` when the owners did not choose any.
 - `tracks_stock` says whether the colour's quantities are counted. When they are, `stock` has **every size of `sizes`**, in that order, and a size the owners did not count comes as `0`, which the site shows as unavailable. `quantity` is never left out, zero included. When they are not, `stock` is `[]` and the site shows the sizes without numbers. `sold_out` wins over any quantity.
 - **There is no `images` at the product level.** Photos belong to a colour. A flat list was sent alongside `colours` while the site was still being migrated, and was dropped once it had been (phase 5 of the variations plan); a site reading it would be reading the older response.
 - `Cache-Control: no-store`. In development without `API_TOKEN`, the route is off.

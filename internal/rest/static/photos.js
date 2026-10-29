@@ -205,6 +205,53 @@
     for (const note of coloursBox.querySelectorAll("[data-stock-empty]")) note.hidden = ticked.size > 0;
   }
 
+  // The colour codes. Pickers stay hidden without JavaScript, since only
+  // this script copies their choice into the code field, which is what is
+  // sent. The page also offers spare empty rows for adding codes without
+  // JavaScript; here they give way to the "+" button. Run again whenever
+  // a block's fields come back from the server.
+  function setUpHexes() {
+    for (const box of coloursBox.querySelectorAll("[data-hexes]")) {
+      for (const spare of box.querySelectorAll("[data-hex-spare]")) spare.remove();
+      for (const picker of box.querySelectorAll("[data-hex-picker]")) picker.hidden = false;
+      syncHexes(box);
+    }
+  }
+
+  function syncHexes(box) {
+    const rows = box.querySelectorAll("[data-hex-row]");
+    rows.forEach((row, i) => {
+      row.querySelector("[data-hex-text]").setAttribute("aria-label", i === 0 ? "Código da cor principal" : "Código de uma cor secundária");
+      row.querySelector("[data-drop-hex]").hidden = i === 0;
+    });
+    const add = box.querySelector("[data-add-hex]");
+    add.hidden = false;
+    add.disabled = rows.length >= Number(box.dataset.max);
+  }
+
+  function addHex(box) {
+    const row = box.querySelector("[data-hex-row]").cloneNode(true);
+    const text = row.querySelector("[data-hex-text]");
+    text.value = "";
+    text.removeAttribute("aria-invalid");
+    text.removeAttribute("aria-describedby");
+    row.querySelector("[data-hex-picker]").value = "#ffffff";
+    for (const error of row.querySelectorAll(".field-error")) error.remove();
+    const rows = box.querySelectorAll("[data-hex-row]");
+    rows[rows.length - 1].after(row);
+    syncHexes(box);
+    dirty = true;
+    text.focus();
+  }
+
+  function dropHex(row) {
+    const box = row.closest("[data-hexes]");
+    row.remove();
+    syncHexes(box);
+    dirty = true;
+    box.querySelector("[data-add-hex]").focus();
+  }
+
   function syncBlocks() {
     const all = blocks();
     all.forEach((block, i) => {
@@ -229,11 +276,17 @@
     startBlock(block);
     syncBlocks();
     syncSizes();
+    setUpHexes();
     dirty = true;
     block.querySelector("input[type=text]").focus();
   });
 
   colourList.addEventListener("click", (e) => {
+    const addHexButton = e.target.closest("[data-add-hex]");
+    if (addHexButton) return addHex(addHexButton.closest("[data-hexes]"));
+    const dropHexButton = e.target.closest("[data-drop-hex]");
+    if (dropHexButton) return dropHex(dropHexButton.closest("[data-hex-row]"));
+
     const drop = e.target.closest("[data-drop-colour]");
     if (!drop) return;
     const block = drop.closest("[data-colour]");
@@ -249,8 +302,20 @@
     if (e.target.matches("input[name=sizes]")) syncSizes();
     if (e.target.matches("[data-remove-colour]")) syncBlocks();
   });
-  form.addEventListener("input", () => {
+  form.addEventListener("input", (e) => {
     dirty = true;
+    const box = e.target.closest("[data-hex-row]");
+    if (!box) return;
+    const picker = box.querySelector("[data-hex-picker]");
+    const text = box.querySelector("[data-hex-text]");
+    if (e.target === picker) {
+      text.value = picker.value;
+      return;
+    }
+    // The picker follows a code typed or pasted once it is a whole one.
+    let code = text.value.trim().toLowerCase();
+    if (code && !code.startsWith("#")) code = "#" + code;
+    if (/^#[0-9a-f]{6}$/.test(code)) picker.value = code;
   });
 
   window.addEventListener("beforeunload", (e) => {
@@ -313,6 +378,7 @@
       }
       syncBlocks();
       syncSizes();
+      setUpHexes();
       form.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch {
       showAlert("Não consegui falar com o painel. Confira a internet e tente de novo. Nada foi salvo.");
@@ -327,4 +393,5 @@
   addRow.hidden = false;
   syncBlocks();
   syncSizes();
+  setUpHexes();
 })();

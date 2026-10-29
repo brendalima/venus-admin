@@ -53,6 +53,7 @@ func run() error {
 	uRepository := repository.MustNewUser(db)
 	sRepository := repository.MustNewSession(db)
 	pRepository := repository.MustNewProduct(db)
+	cRepository := repository.MustNewCollection(db)
 	prRepository := repository.MustNewPasswordReset(db)
 
 	mailer := newMailer(cfg, logger)
@@ -62,10 +63,12 @@ func run() error {
 	hService := services.MustNewHealth(hRepository)
 	uService := services.MustNewUser(uRepository, sRepository)
 	pService := services.MustNewProduct(services.ProductInput{
-		Repo:      pRepository,
-		Store:     imageStore,
-		Processor: storage.NewJPEGProcessor(),
+		Repo:        pRepository,
+		Collections: cRepository,
+		Store:       imageStore,
+		Processor:   storage.NewJPEGProcessor(),
 	})
+	cService := services.MustNewCollection(cRepository)
 	siteService := newSiteService(cfg, logger, pRepository)
 	prService := services.MustNewPasswordReset(services.PasswordResetInput{
 		Users:   uRepository,
@@ -87,8 +90,14 @@ func run() error {
 		ClientIPHeader: cfg.ClientIPHeader,
 	})
 	rProduct := rest.MustNewProduct(rest.ProductInput{
-		Service:   pService,
-		Site:      siteService,
+		Service:     pService,
+		Collections: cService,
+		Site:        siteService,
+		Sessions:    sessions,
+		Templates:   templates,
+	})
+	rCollection := rest.MustNewCollection(rest.CollectionInput{
+		Service:   cService,
 		Sessions:  sessions,
 		Templates: templates,
 	})
@@ -126,11 +135,17 @@ func run() error {
 	app.Handle("POST /admin/products/{id}/archive", private(rProduct.Archive))
 	app.Handle("POST /admin/products/{id}/unarchive", private(rProduct.Unarchive))
 	app.Handle("GET /admin/arquivadas", private(rProduct.ListArchived))
-	// Reached from /admin/arquivadas only: a piece leaves the collection
+	// Reached from /admin/arquivadas only: a piece leaves the site
 	// first, and is deleted for good from there.
 	app.Handle("GET /admin/products/{id}/delete", private(rProduct.ConfirmDelete))
 	app.Handle("POST /admin/products/{id}/delete", private(rProduct.Delete))
 	app.Handle("POST /admin/publish", private(rProduct.Publish))
+	app.Handle("GET /admin/collections", private(rCollection.List))
+	app.Handle("POST /admin/collections", private(rCollection.Create))
+	app.Handle("GET /admin/collections/{id}", private(rCollection.Edit))
+	app.Handle("POST /admin/collections/{id}", private(rCollection.Update))
+	app.Handle("GET /admin/collections/{id}/delete", private(rCollection.ConfirmDelete))
+	app.Handle("POST /admin/collections/{id}/delete", private(rCollection.Delete))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", rHealth.Live)

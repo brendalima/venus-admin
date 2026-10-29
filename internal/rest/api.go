@@ -19,15 +19,16 @@ import (
 // off the product: the flat images list that sat here while the site
 // was migrating was dropped once it read colours.
 type productResponse struct {
-	ID          string           `json:"id"`
-	Slug        string           `json:"slug"`
-	Name        string           `json:"name"`
-	PriceCents  int64            `json:"price_cents,omitzero"`
-	Sizes       []string         `json:"sizes"`
-	Colours     []colourResponse `json:"colours"`
-	Description string           `json:"description,omitempty"`
-	Details     []string         `json:"details,omitempty"`
-	SoldOut     bool             `json:"sold_out"`
+	ID          string              `json:"id"`
+	Slug        string              `json:"slug"`
+	Name        string              `json:"name"`
+	PriceCents  int64               `json:"price_cents,omitzero"`
+	Sizes       []string            `json:"sizes"`
+	Colours     []colourResponse    `json:"colours"`
+	Description string              `json:"description,omitempty"`
+	Collection  *collectionResponse `json:"collection"` // null when the piece is in none
+	Details     []string            `json:"details,omitempty"`
+	SoldOut     bool                `json:"sold_out"`
 }
 
 // colourResponse is one colour with its photos, cover first, and its
@@ -38,9 +39,15 @@ type productResponse struct {
 type colourResponse struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
+	Hex         []string        `json:"hex"` // main code first; [] when none
 	Images      []imageResponse `json:"images"`
 	TracksStock bool            `json:"tracks_stock"`
 	Stock       []stockResponse `json:"stock"`
+}
+
+type collectionResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // stockResponse never omits a zero quantity: a size gone missing would
@@ -139,6 +146,9 @@ func (a *API) toProductResponse(p domain.Product) productResponse {
 	if p.HasPrice() {
 		res.PriceCents = p.PriceCents
 	}
+	if p.CollectionID != "" {
+		res.Collection = &collectionResponse{ID: p.CollectionID, Name: p.CollectionName}
+	}
 	if res.Sizes == nil {
 		res.Sizes = []string{}
 	}
@@ -152,6 +162,7 @@ func (a *API) toColourResponse(c domain.Colour, sizes []string) colourResponse {
 	res := colourResponse{
 		ID:          c.ID,
 		Name:        c.Name,
+		Hex:         append([]string{}, c.Hexes...),
 		Images:      a.toImageResponses(c.Images),
 		TracksStock: c.TracksStock(),
 		Stock:       []stockResponse{},

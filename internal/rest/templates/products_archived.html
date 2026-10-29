@@ -16,7 +16,7 @@
 {{else}}
 <div class="card">
   <p>Nenhuma peça arquivada.</p>
-  <p class="muted">O que você tirar da coleção aparece aqui.</p>
+  <p class="muted">O que você tirar do site aparece aqui.</p>
 </div>
 {{end}}
 
@@ -29,17 +29,17 @@
   <div class="row-actions">
     <form class="inline" method="post" action="/admin/products/{{.ID}}/unarchive"
           hx-post="/admin/products/{{.ID}}/unarchive" hx-target="closest li" hx-swap="outerHTML">
-      <button type="submit" class="secondary">Voltar para a coleção</button>
+      <button type="submit" class="secondary">Voltar para o site</button>
     </form>
     <a href="/admin/products/{{.ID}}/delete">Apagar de vez</a>
   </div>
 </li>
 {{end}}
 
-{{/* What replaces a row once its piece is back in the collection: the
+{{/* What replaces a row once its piece is back on the site: the
      outcome where the person is looking. */}}
 {{define "restored-row"}}
 <li class="product" id="product-{{.ID}}">
-  <p class="restored" role="status">“{{.Name}}” voltou para a coleção. Ela aparece no site na próxima publicação. <a href="/admin">Ver nas peças</a></p>
+  <p class="restored" role="status">“{{.Name}}” voltou para o site. Ela aparece na próxima publicação. <a href="/admin">Ver nas peças</a></p>
 </li>
 {{end}}
