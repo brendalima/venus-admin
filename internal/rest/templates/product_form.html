@@ -53,9 +53,9 @@
       </fieldset>
       {{with index $e "sizes"}}<p class="field-error" id="sizes-error">{{.}}</p>{{end}}
 
-      <label for="description">Descrição curta</label>
-      <textarea id="description" name="description" rows="2" aria-describedby="description-hint">{{.Form.Description}}</textarea>
-      <p class="hint" id="description-hint">Aparece no card da peça. Uma frase basta.</p>
+      <label for="description">Descrição</label>
+      <textarea id="description" name="description" rows="4" aria-describedby="description-hint">{{.Form.Description}}</textarea>
+      <p class="hint" id="description-hint">Escreva um parágrafo sobre o modelo.</p>
 
       <label for="details">Detalhes</label>
       <textarea id="details" name="details" rows="5" aria-describedby="details-hint">{{.Form.Details}}</textarea>
