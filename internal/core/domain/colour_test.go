@@ -19,6 +19,7 @@ func TestColourTracksStock(t *testing.T) {
 func TestColoursEditNormalized(t *testing.T) {
 	in := ColoursEdit{Colours: []ColourEdit{{
 		Name:  "  Bege ",
+		Hexes: []string{" C8A27C", "", " "},
 		Stock: []Stock{{Size: "G", Quantity: 1}, {Size: "GG", Quantity: 4}, {Size: "P", Quantity: 2}, {Size: "G", Quantity: 9}},
 	}}}
 
@@ -28,6 +29,9 @@ func TestColoursEditNormalized(t *testing.T) {
 	if c.Name != "Bege" {
 		t.Errorf("name = %q, want it trimmed", c.Name)
 	}
+	if !slices.Equal(c.Hexes, []string{"#c8a27c"}) {
+		t.Errorf("hexes = %q, want #c8a27c alone", c.Hexes)
+	}
 	// GG is not in the grid; the second G is a repeat.
 	want := []Stock{{Size: "P", Quantity: 2}, {Size: "G", Quantity: 1}}
 	if !slices.Equal(c.Stock, want) {
@@ -35,6 +39,35 @@ func TestColoursEditNormalized(t *testing.T) {
 	}
 	if in.Colours[0].Name != "  Bege " || len(in.Colours[0].Stock) != 4 {
 		t.Error("the input was modified")
+	}
+}
+
+func TestNormalizeHex(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", ""},
+		{"   ", ""},
+		{"#c8a27c", "#c8a27c"},
+		{" #C8A27C ", "#c8a27c"},
+		{"C8A27C", "#c8a27c"},
+		{"bege", "#bege"}, // left for ValidHex to refuse
+	}
+	for _, tt := range tests {
+		if got := NormalizeHex(tt.in); got != tt.want {
+			t.Errorf("NormalizeHex(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestValidHex(t *testing.T) {
+	for _, hex := range []string{"#000000", "#c8a27c", "#ffffff"} {
+		if !ValidHex(hex) {
+			t.Errorf("ValidHex(%q) = false", hex)
+		}
+	}
+	for _, hex := range []string{"", "#", "c8a27c", "#c8a27", "#c8a27c0", "#C8A27C", "#g8a27c", "#c8a27é"} {
+		if ValidHex(hex) {
+			t.Errorf("ValidHex(%q) = true", hex)
+		}
 	}
 }
 
@@ -99,6 +132,33 @@ func TestColoursEditValidate(t *testing.T) {
 				Name: "Bege", Stock: []Stock{{Size: "P", Quantity: -1}, {Size: "M", Quantity: MaxQuantity + 1}},
 			}}},
 			wantFields: []string{"colours.0.stock.P", "colours.0.stock.M"},
+		},
+		{
+			name: "main and secondary hex codes",
+			edit: ColoursEdit{Colours: []ColourEdit{{Name: "Bege", Hexes: []string{"#c8a27c", "#ffffff", "#000000"}}}},
+		},
+		{
+			name: "hex codes that are not colours",
+			edit: ColoursEdit{Colours: []ColourEdit{
+				{Name: "Bege", Hexes: []string{"#c8a27"}}, {Name: "Vinho", Hexes: []string{"#5a1a2b", "#vinho1"}}, {Name: "Azul", Hexes: []string{"#C8A27C"}},
+			}},
+			wantFields: []string{"colours.0.hex.0", "colours.1.hex.1", "colours.2.hex.0"},
+		},
+		{
+			name:       "too many hex codes",
+			edit:       ColoursEdit{Colours: []ColourEdit{{Name: "Bege", Hexes: []string{"#000000", "#111111", "#222222", "#333333"}}}},
+			wantFields: []string{"colours.0.hex"},
+		},
+		{
+			// A colour picked and nothing else is something to finish,
+			// not a block to skip.
+			name:       "new colour with a hex code but no name",
+			edit:       ColoursEdit{Colours: []ColourEdit{{Hexes: []string{"#c8a27c"}}}},
+			wantFields: []string{"colours.0.name"},
+		},
+		{
+			name: "a blank hex row leaves a new colour blank",
+			edit: ColoursEdit{Colours: []ColourEdit{{Name: "Bege"}, {Hexes: []string{" "}}}},
 		},
 		{
 			name:       "too many colours",

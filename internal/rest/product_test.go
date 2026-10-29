@@ -199,7 +199,7 @@ func (m *mockProductService) applyColours(current []domain.Colour, edit domain.C
 			}
 			mentioned++
 		}
-		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock, Images: []domain.Image{}}
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Hexes: c.Hexes, Stock: c.Stock, Images: []domain.Image{}}
 		if colour.ID == "" {
 			colour.ID = fmt.Sprintf("added-%d", n)
 		}

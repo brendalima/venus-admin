@@ -387,8 +387,8 @@ func lockColours(ctx context.Context, tx *sql.Tx, productID string) (map[string]
 
 func insertColour(ctx context.Context, tx *sql.Tx, productID string, c domain.Colour, position int) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO product_colours (id, product_id, name, position) VALUES ($1, $2, $3, $4)`,
-		c.ID, productID, c.Name, position)
+		`INSERT INTO product_colours (id, product_id, name, hex, position) VALUES ($1, $2, $3, $4, $5)`,
+		c.ID, productID, c.Name, nonNil(c.Hexes), position)
 	if err != nil {
 		return translateWriteError(err, "couldn't add colour")
 	}
@@ -410,9 +410,10 @@ func insertColour(ctx context.Context, tx *sql.Tx, productID string, c domain.Co
 // in c that stored does not have are new; the removed ones are already
 // gone.
 func updateColour(ctx context.Context, tx *sql.Tx, productID string, stored, c domain.Colour, position int) error {
-	if stored.Name != c.Name || int(stored.Position) != position {
+	if stored.Name != c.Name || !slices.Equal(stored.Hexes, c.Hexes) || int(stored.Position) != position {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE product_colours SET name = $2, position = $3 WHERE id = $1`, c.ID, c.Name, position,
+			`UPDATE product_colours SET name = $2, hex = $3, position = $4 WHERE id = $1`,
+			c.ID, c.Name, nonNil(c.Hexes), position,
 		); err != nil {
 			return translateWriteError(err, "couldn't update colour")
 		}
@@ -607,7 +608,7 @@ func sizeRank(sizes []string, size string) int {
 // them names the table: FOR UPDATE alone would lock the colours too, which
 // is harmless but says more than meant.
 const (
-	readColoursQuery = `SELECT id, product_id, name, position, created_at FROM product_colours
+	readColoursQuery = `SELECT id, product_id, name, hex, position, created_at FROM product_colours
 		WHERE product_id = ANY($1)
 		ORDER BY product_id, position, created_at, id`
 	readImagesQuery = `SELECT i.id, i.colour_id, i.key_600, i.key_1200, i.position, i.created_at
@@ -633,7 +634,7 @@ func readColours(ctx context.Context, q querier, productIDs []string, forUpdate 
 	var colours []domain.Colour
 	err := queryRows(ctx, q, coloursQuery, productIDs, func(rows *sql.Rows) error {
 		c := domain.Colour{Images: []domain.Image{}, Stock: []domain.Stock{}}
-		if err := rows.Scan(&c.ID, &c.ProductID, &c.Name, &c.Position, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProductID, &c.Name, &c.Hexes, &c.Position, &c.CreatedAt); err != nil {
 			return err
 		}
 		colours = append(colours, c)

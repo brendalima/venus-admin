@@ -331,7 +331,7 @@ func (s *Product) prepareColours(ctx context.Context, current []domain.Colour, e
 		if c.Blank() {
 			continue
 		}
-		colour := domain.Colour{ID: c.ID, Name: c.Name, Stock: c.Stock}
+		colour := domain.Colour{ID: c.ID, Name: c.Name, Hexes: c.Hexes, Stock: c.Stock}
 		if colour.ID == "" {
 			colour.ID = uuid.New().String()
 			out.changes.AddedColours = append(out.changes.AddedColours, colour.ID)

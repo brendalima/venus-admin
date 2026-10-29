@@ -150,6 +150,32 @@
     <p class="hint" id="colour-{{.Key}}-name-hint">Como vocês chamam a cor: Bege, Vinho, Verde-água.</p>
     {{with index .Errors "name"}}<p class="field-error" id="colour-{{$k}}-name-error">{{.}}</p>{{end}}
 
+    {{/* One row per code, the main one first. The pickers have no name:
+         each only fills the text field next to it, which is what is sent,
+         and which can be left empty. photos.js shows the pickers, keeps
+         each pair in step, takes off the spare rows and adds rows with
+         "+"; without JavaScript the codes are typed in the spare rows. */}}
+    <fieldset class="hexes" data-hexes data-max="{{.MaxHexes}}" aria-describedby="colour-{{.Key}}-hex-hint">
+      <legend>Código da cor <span class="hint">(opcional)</span></legend>
+      <p class="hint" id="colour-{{.Key}}-hex-hint">Clique no quadrado para escolher a cor, ou cole o código, como #C8A27C. O primeiro é a cor principal; os outros, as secundárias de uma estampa ou de um detalhe.</p>
+      {{range .HexRows}}
+      {{$err := printf "colour-%s-hex-%d-error" $k .Index}}
+      <div class="hex-row" data-hex-row {{if .Spare}}data-hex-spare{{end}}>
+        <div class="hex">
+          <input type="color" value="{{.Picker}}" data-hex-picker aria-label="Escolher a cor" hidden>
+          <input name="colour_{{$k}}_hex" type="text" value="{{.Value}}" placeholder="#C8A27C"
+                 autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="7" data-hex-text
+                 aria-label="{{if .Main}}Código da cor principal{{else}}Código de uma cor secundária{{end}}"
+                 {{if .Error}}aria-invalid="true" aria-describedby="{{$err}}"{{end}}>
+          <button type="button" class="secondary" data-drop-hex hidden>Tirar</button>
+        </div>
+        {{with .Error}}<p class="field-error" id="{{$err}}">{{.}}</p>{{end}}
+      </div>
+      {{end}}
+      {{with index .Errors "hex"}}<p class="field-error">{{.}}</p>{{end}}
+      <button type="button" class="secondary add-hex" data-add-hex hidden>+ Cor secundária</button>
+    </fieldset>
+
     <fieldset class="stock" aria-describedby="colour-{{.Key}}-stock-hint">
       <legend>Quantidade em estoque</legend>
       <p class="hint" id="colour-{{.Key}}-stock-hint">Uma quantidade por tamanho. Deixe vazio o tamanho que você não controla; escreva 0 no que acabou — no site ele aparece como “indisponível”.</p>

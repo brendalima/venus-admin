@@ -235,6 +235,45 @@ func TestProductUpdateWithColoursStock(t *testing.T) {
 	}
 }
 
+func TestProductColourHexes(t *testing.T) {
+	db := testDB(t)
+	repo := MustNewProduct(db)
+	ctx := context.Background()
+
+	p := newTestProduct(t, db)
+	bege, vinho := newColour("Bege"), newColour("Vinho")
+	bege.Hexes = []string{"#c8a27c", "#ffffff"}
+	p.Colours = []domain.Colour{bege, vinho}
+	created, err := repo.Create(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := created.Colours; !slices.Equal(got[0].Hexes, []string{"#c8a27c", "#ffffff"}) || got[1].Hexes == nil || len(got[1].Hexes) != 0 {
+		t.Fatalf("hexes %q and %#v after create, want Bege's two in order and an empty list", got[0].Hexes, got[1].Hexes)
+	}
+
+	// Bege loses its codes, Vinho gets one.
+	created.Colours[0].Hexes, created.Colours[1].Hexes = nil, []string{"#5a1a2b"}
+	if _, _, err := repo.UpdateWithColours(ctx, created, domain.ColourChanges{}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetByID(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Colours[0].Hexes) != 0 || !slices.Equal(stored.Colours[1].Hexes, []string{"#5a1a2b"}) {
+		t.Errorf("hexes %q and %q after update, want none and Vinho's", stored.Colours[0].Hexes, stored.Colours[1].Hexes)
+	}
+
+	// The column refuses what the domain would.
+	for _, bad := range [][]string{{"#C8A27C"}, {"#c8a27c", "c8a27c"}, {""}} {
+		stored.Colours[0].Hexes = bad
+		if _, _, err := repo.UpdateWithColours(ctx, stored, domain.ColourChanges{}); err == nil {
+			t.Errorf("hexes %q were stored", bad)
+		}
+	}
+}
+
 // The unique index on names is checked row by row: two colours trading
 // names must not trip over each other halfway.
 func TestProductUpdateWithColoursSwapsNames(t *testing.T) {

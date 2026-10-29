@@ -16,6 +16,8 @@ import (
 //
 //	colour_<k>_id            the colour's ID, empty for a new one
 //	colour_<k>_name
+//	colour_<k>_hex           one per code, like #c8a27c, the main one first;
+//	                         empty ones are left out
 //	colour_<k>_stock_<size>  a quantity, empty when the size is not counted
 //	colour_<k>_remove        set to delete an existing colour on save
 //	photo_order_<k>          as photo_order was, sent by photos.js only
@@ -43,6 +45,7 @@ type colourBlock struct {
 	Key    string
 	ID     string            // empty for a new colour
 	Name   string            // as typed
+	Hexes  []string          // as typed, the empty ones left out
 	Stock  map[string]string // quantities by size, as typed
 	Remove bool              // marked to be deleted on save
 
@@ -50,13 +53,13 @@ type colourBlock struct {
 	// browser (static/photos.js) until the form is saved.
 	Photos []domain.Image
 
-	Errors      map[string]string // by field within the colour: "name", "stock.P"
+	Errors      map[string]string // by field within the colour: "name", "hex", "hex.1", "stock.P"
 	PhotoErrors []string          // one per file that could not be used, naming it
 }
 
 // blank reports whether b is a new colour with nothing typed in it.
 func (b colourBlock) blank() bool {
-	if b.ID != "" || strings.TrimSpace(b.Name) != "" {
+	if b.ID != "" || strings.TrimSpace(b.Name) != "" || len(b.Hexes) > 0 {
 		return false
 	}
 	for _, v := range b.Stock {
@@ -75,7 +78,7 @@ func colourBlocksFrom(p domain.Product) []colourBlock {
 		for _, s := range c.Stock {
 			stock[s.Size] = strconv.Itoa(int(s.Quantity))
 		}
-		blocks[i] = colourBlock{Key: strconv.Itoa(i), ID: c.ID, Name: c.Name, Stock: stock, Photos: c.Images}
+		blocks[i] = colourBlock{Key: strconv.Itoa(i), ID: c.ID, Name: c.Name, Hexes: c.Hexes, Stock: stock, Photos: c.Images}
 	}
 	return blocks
 }
@@ -141,6 +144,7 @@ func readColours(r *http.Request, sizes []string) (postedColours, bool, error) {
 			Key:    key,
 			ID:     strings.TrimSpace(r.PostForm.Get(colourField(key, "id"))),
 			Name:   r.PostForm.Get(colourField(key, "name")),
+			Hexes:  postedHexes(r.PostForm[colourField(key, "hex")]),
 			Stock:  map[string]string{},
 			Remove: r.PostForm.Get(colourField(key, "remove")) != "",
 		}
@@ -161,7 +165,7 @@ func readColours(r *http.Request, sizes []string) (postedColours, bool, error) {
 		}
 
 		pos := len(pc.edit.Colours)
-		c := domain.ColourEdit{ID: b.ID, Name: b.Name}
+		c := domain.ColourEdit{ID: b.ID, Name: b.Name, Hexes: b.Hexes}
 		// Only the sizes ticked are read: the others' fields are hidden,
 		// and whatever they hold means nothing.
 		for _, size := range sizes {
@@ -191,6 +195,19 @@ func readColours(r *http.Request, sizes []string) (postedColours, bool, error) {
 		pc.fileNames = append(pc.fileNames, names)
 	}
 	return pc, true, nil
+}
+
+// postedHexes are the codes of a colour block without the empty fields:
+// the form offers more than are used. What is left keeps its order, which
+// is how the service's errors name each code.
+func postedHexes(values []string) []string {
+	var hexes []string
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			hexes = append(hexes, v)
+		}
+	}
+	return hexes
 }
 
 // readColourPhotos reads the photo edit of the colour block key: the
@@ -239,8 +256,14 @@ func (pc *postedColours) placeErrors(errs map[string]string) []string {
 			delete(errs, domain.ColourField(pos, field))
 			return msg, ok
 		}
-		if msg, ok := take("name"); ok {
-			b.setError("name", msg)
+		fields := []string{"name", "hex"}
+		for i := range b.Hexes {
+			fields = append(fields, domain.HexField(i))
+		}
+		for _, field := range fields {
+			if msg, ok := take(field); ok {
+				b.setError(field, msg)
+			}
 		}
 		for _, size := range domain.AllSizes() {
 			if msg, ok := take("stock." + size); ok {
@@ -303,6 +326,46 @@ type stockField struct {
 	Shown bool // the product comes in this size
 	Error string
 }
+
+// hexRow is one code of a colour block: a picker and the text field it
+// fills, which is what is sent.
+type hexRow struct {
+	Index int
+	Value string
+	Error string
+	// Spare rows are the empty ones offered for adding a code without
+	// JavaScript; photos.js takes them off and adds rows with "+".
+	Spare bool
+}
+
+func (r hexRow) Main() bool { return r.Index == 0 }
+
+// Picker is what the colour picker starts at: the code typed, when it is
+// one, or white. The picker cannot be empty; the text field can.
+func (r hexRow) Picker() string {
+	if hex := domain.NormalizeHex(r.Value); domain.ValidHex(hex) {
+		return hex
+	}
+	return "#ffffff"
+}
+
+// HexRows are the colour's codes, at least the main one even if empty,
+// and spare rows up to the most a colour may have.
+func (v colourView) HexRows() []hexRow {
+	var rows []hexRow
+	for i, hex := range v.Hexes {
+		rows = append(rows, hexRow{Index: i, Value: hex, Error: v.Errors[domain.HexField(i)]})
+	}
+	if len(rows) == 0 {
+		rows = append(rows, hexRow{})
+	}
+	for len(rows) < domain.MaxHexesPerColour {
+		rows = append(rows, hexRow{Index: len(rows), Spare: true})
+	}
+	return rows
+}
+
+func (colourView) MaxHexes() int { return domain.MaxHexesPerColour }
 
 // HasSizes reports whether any size is ticked, without which there is no
 // quantity to give.

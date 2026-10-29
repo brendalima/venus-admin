@@ -19,7 +19,11 @@ type Colour struct {
 	ID        string
 	ProductID string
 	Name      string
-	Position  int32
+	// Hexes are the colour as codes, like "#c8a27c", for the site to
+	// paint a swatch with: the main one first, then the secondary ones of
+	// a print or a trim. Empty when nobody chose any.
+	Hexes    []string
+	Position int32
 
 	// Images are the colour's photos, cover first.
 	Images []Image
@@ -59,6 +63,40 @@ func (c Colour) Quantity(size string) int32 {
 	return 0
 }
 
+// MaxHexesPerColour is the main code and two secondary ones: enough for a
+// print or a trim, few enough for a swatch to read.
+const MaxHexesPerColour = 3
+
+// HexField names the hex code at index i of a colour, such as "hex.1".
+func HexField(i int) string { return "hex." + strconv.Itoa(i) }
+
+func notBlank(s string) bool { return strings.TrimSpace(s) != "" }
+
+// NormalizeHex writes a colour code the way it is stored: trimmed,
+// lowercase and starting with "#", so "C8A27C" and "#c8a27c" are the same
+// colour. It does not check the code; ValidHex does.
+func NormalizeHex(hex string) string {
+	hex = strings.ToLower(strings.TrimSpace(hex))
+	if hex == "" || strings.HasPrefix(hex, "#") {
+		return hex
+	}
+	return "#" + hex
+}
+
+// ValidHex reports whether hex is a normalized colour code: "#" and six
+// hexadecimal digits, lowercase.
+func ValidHex(hex string) bool {
+	if len(hex) != 7 || hex[0] != '#' {
+		return false
+	}
+	for _, r := range hex[1:] {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
+}
+
 // ColourField is the ValidationError field for field of the colour at
 // index n of a ColoursEdit, such as "colours.1.name".
 func ColourField(n int, field string) string {
@@ -82,8 +120,9 @@ type ColoursEdit struct {
 
 // ColourEdit is one colour of a ColoursEdit.
 type ColourEdit struct {
-	ID   string // an existing colour, or empty for a new one
-	Name string
+	ID    string // an existing colour, or empty for a new one
+	Name  string
+	Hexes []string
 	// Stock replaces the colour's stock entirely: a size left out is no
 	// longer counted.
 	Stock  []Stock
@@ -94,17 +133,25 @@ type ColourEdit struct {
 // photo, no quantity. The form offers one ready to fill, and leaving it
 // alone must not get in the way of saving.
 func (c ColourEdit) Blank() bool {
-	return c.ID == "" && strings.TrimSpace(c.Name) == "" && len(c.Stock) == 0 &&
+	return c.ID == "" && strings.TrimSpace(c.Name) == "" && !slices.ContainsFunc(c.Hexes, notBlank) && len(c.Stock) == 0 &&
 		len(c.Photos.Order) == 0 && len(c.Photos.New) == 0
 }
 
-// Normalized trims the names, and keeps each colour's stock to the sizes
+// Normalized trims the names, writes the hex codes as NormalizeHex does,
+// leaving out the empty ones, and keeps each colour's stock to the sizes
 // in sizes, the product's, once each and in that order. A quantity for a
 // size the product no longer comes in means nothing.
 func (e ColoursEdit) Normalized(sizes []string) ColoursEdit {
 	colours := make([]ColourEdit, len(e.Colours))
 	for n, c := range e.Colours {
 		c.Name = strings.TrimSpace(c.Name)
+		hexes := []string{}
+		for _, hex := range c.Hexes {
+			if hex = NormalizeHex(hex); hex != "" {
+				hexes = append(hexes, hex)
+			}
+		}
+		c.Hexes = hexes
 		var stock []Stock
 		for _, size := range sizes {
 			if i := slices.IndexFunc(c.Stock, func(s Stock) bool { return s.Size == size }); i >= 0 {
@@ -140,6 +187,16 @@ func (e ColoursEdit) Validate() error {
 			errs = append(errs, NewValidationError(ColourField(n, "name"), "Já existe outra cor com esse nome nesta peça"))
 		}
 		names[name] = true
+
+		for i, hex := range c.Hexes {
+			if !ValidHex(hex) {
+				errs = append(errs, NewValidationError(ColourField(n, HexField(i)), "Escreva a cor como # e seis letras ou números, como #C8A27C, ou deixe vazio"))
+			}
+		}
+		if len(c.Hexes) > MaxHexesPerColour {
+			errs = append(errs, NewValidationError(ColourField(n, "hex"), fmt.Sprintf(
+				"Cada cor pode ter até %d códigos: o principal e %d secundários.", MaxHexesPerColour, MaxHexesPerColour-1)))
+		}
 
 		sizes := map[string]bool{}
 		for _, s := range c.Stock {

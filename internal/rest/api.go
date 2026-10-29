@@ -38,6 +38,7 @@ type productResponse struct {
 type colourResponse struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
+	Hex         []string        `json:"hex"` // main code first; [] when none
 	Images      []imageResponse `json:"images"`
 	TracksStock bool            `json:"tracks_stock"`
 	Stock       []stockResponse `json:"stock"`
@@ -152,6 +153,7 @@ func (a *API) toColourResponse(c domain.Colour, sizes []string) colourResponse {
 	res := colourResponse{
 		ID:          c.ID,
 		Name:        c.Name,
+		Hex:         append([]string{}, c.Hexes...),
 		Images:      a.toImageResponses(c.Images),
 		TracksStock: c.TracksStock(),
 		Stock:       []stockResponse{},
